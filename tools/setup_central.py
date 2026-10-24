@@ -114,12 +114,14 @@ def main(url):
     db.commit()
     print(f"  {len(rows)} site(s) loaded into the Observatory")
 
-    print("\nAdd these lines to .env, then: docker compose up -d")
-    print(f"OBS_ODK_URL={url}")
-    print(f"OBS_ODK_PROJECT_ID={pid}")
-    print(f"OBS_ODK_EMAIL={sync_email}")
+    lines = [f"OBS_ODK_URL={url}", f"OBS_ODK_PROJECT_ID={pid}", f"OBS_ODK_EMAIL={sync_email}"]
     if sync_pw:
-        print(f"OBS_ODK_PASSWORD={sync_pw}")
+        lines.append(f"OBS_ODK_PASSWORD={sync_pw}")
+    out = Path("/tmp/odk.env")
+    out.write_text("\n".join(lines) + "\n")
+    out.chmod(0o600)
+    print("\nDone. Settings for .env written to /tmp/odk.env inside the container. On the host:")
+    print("  docker compose exec app cat /tmp/odk.env >> .env && docker compose exec app rm /tmp/odk.env && docker compose up -d")
 
 
 if __name__ == "__main__":
