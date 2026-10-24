@@ -56,9 +56,17 @@ fi
 cd /opt/central
 [ -f .env ] || cp .env.template .env
 sed -i "s/^DOMAIN=.*/DOMAIN=${ODK_DOMAIN}/; s/^SYSADMIN_EMAIL=.*/SYSADMIN_EMAIL=${ADMIN_EMAIL}/; s/^SSL_TYPE=.*/SSL_TYPE=upstream/" .env
-grep -q '^HTTP_PORT=' .env && sed -i 's/^HTTP_PORT=.*/HTTP_PORT=127.0.0.1:8080/' .env || echo 'HTTP_PORT=127.0.0.1:8080' >> .env
-grep -q '^HTTPS_PORT=' .env && sed -i 's/^HTTPS_PORT=.*/HTTPS_PORT=127.0.0.1:8443/' .env || echo 'HTTPS_PORT=127.0.0.1:8443' >> .env
-docker compose build && docker compose up -d
+sed -i '/^HTTP_PORT=/d; /^HTTPS_PORT=/d' .env          # keep defaults so ODK builds correct public links
+# Caddy owns ports 80/443; publish Central's nginx only on localhost:8080.
+cat > docker-compose.override.yml <<'OVR'
+services:
+  nginx:
+    ports: !override
+      - "127.0.0.1:8080:80"
+OVR
+touch ./files/allow-postgres14-upgrade               # required on a new install (ODK install guide)
+docker compose build
+docker compose up -d
 # Check these settings against ODK's "Using a custom reverse proxy" guide for the Central version installed.
 fi
 
