@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coastal One Health Observatory</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card login-card" autocomplete="on">
+    <p class="lbl">CSIR-NIO · MAGICS / CEDAC</p>
+    <h1>Kochi Coastal One Health Observatory</h1>
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" required>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn primary" type="submit">Sign in</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</div>
+
+<div id="shell" hidden>
+  <header class="top">
+    <div>
+      <p class="lbl">CSIR-NIO · MAGICS / CEDAC · NERCI · CMFRI</p>
+      <h1>Kochi Coastal One Health Observatory</h1>
+      <p class="mut" id="who"></p>
+    </div>
+    <div class="top-actions">
+      <label class="check" id="test-toggle" hidden><input type="checkbox" id="include-test"> Include test site</label>
+      <button class="btn" id="refresh" type="button">Refresh</button>
+      <button class="btn" id="logout" type="button">Sign out</button>
+    </div>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Dashboard view"></nav>
+  <main id="view" tabindex="-1"></main>
+  <footer class="mut small">Identifiable details are visible only to roles that need them. Every page you open is recorded in the audit log. Malayalam text is a machine-assisted translation for accessibility; English is the reference.</footer>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
