@@ -20,8 +20,9 @@ FORM_SERVER=${FORM_SERVER:-odk}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 
 echo "== 1. System packages, Docker, firewall"
-apt-get update -y
-apt-get install -y ca-certificates curl git ufw gnupg debian-keyring debian-archive-keyring apt-transport-https
+APT="apt-get -o DPkg::Lock::Timeout=1800"
+$APT update -y
+$APT install -y ca-certificates curl git ufw gnupg debian-keyring debian-archive-keyring apt-transport-https
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
 ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable
 if ! swapon --show | grep -q swap; then             # ODK Central builds need memory headroom
@@ -33,7 +34,7 @@ echo "== 2. Caddy (HTTPS certificates are automatic)"
 if ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -y && apt-get install -y caddy
+  $APT update -y && $APT install -y caddy
 fi
 cat > /etc/caddy/Caddyfile <<CADDY
 {
