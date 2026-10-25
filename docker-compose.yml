@@ -28,6 +28,8 @@ services:
     environment:
       OBS_DATABASE_URL: postgresql+psycopg://observatory:${OBS_DB_PASSWORD}@db:5432/observatory
     command: ["sh", "-c", "while true; do python -m tools.jobs sync; sleep 900; done & while true; do python -m tools.jobs rules; sleep 3600; done & while true; do python -m tools.jobs weather; sleep 43200; done"]
+    healthcheck:
+      disable: true                     # no web server in this container; the app container has the health check
     depends_on: [db]
     networks: [internal]
 

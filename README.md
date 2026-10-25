@@ -32,7 +32,7 @@ CSIR-NIO × MAGICS / CEDAC Aquadip© project and the longer-term Observatory.
 | `app/` | API, database models, ODK sync, analytics, rules |
 | `web/` | Dashboard (plain HTML, CSS and JavaScript; no external libraries or fonts) |
 | `tools/` | QR stickers, demo data, site publishing, user creation, scheduled jobs, data dictionary |
-| `tests/` | 35 automated tests (pass on SQLite and PostgreSQL 16) |
+| `tests/` | 45 automated tests (pass on SQLite and PostgreSQL 16) |
 | `deploy/`, `Dockerfile`, `docker-compose.yml` | Production deployment for the NIO server |
 | `docs/` | Deployment, security and audit notes, field guide, data dictionary |
 
@@ -44,6 +44,21 @@ CSIR-NIO × MAGICS / CEDAC Aquadip© project and the longer-term Observatory.
 | `obs_camp_station` | Measurements, eye, dental, geriatric (MSW) and doctor stations | One form; each phone is set to its station once |
 | `obs_household_visit` | ASHAs and volunteers, between camps | Illness counts, referral follow-up, elder checks, advice given |
 | `obs_water_sample` | NIO team, citizen scientists | Sample bottle ID, GPS, field readings, Aquadip© result and photo |
+| `obs_report_diarrhoea` | ASHAs, volunteers, ward members | Scan the door sticker, pick or add the person, report diarrhoea and days lost |
+| `obs_report_health` | ASHAs, volunteers, ward members | Same, for other illness (water-related or not) |
+| `obs_report_onehealth` | Anyone in the field | Sick or dead animals, dead fish, rats, mosquito breeding, flooding, water changes |
+
+Camp registration adds each person to a **household list on every phone** (an ODK entity list), so the
+report forms can show "who in this house is ill?" offline. A person added in a report joins the list too.
+Admins can add more report forms from the Admin tab (start from `forms/dist/report_form_template.xlsx`)
+and choose which dashboard roles see each form's reports.
+
+## Workdays lost
+
+Every illness report asks the same questions: days ill, the person's usual work, days unable to work,
+school days missed and days a family member stayed home to care. The Household reports tab adds these
+up for water-related illness (water-borne, water-washed, water contact and mosquito-borne), by site and
+type, per 1,000 people registered, and in rupees once an admin sets a daily wage.
 
 Site and role carry over from each phone's last form, so they are set once per day.
 
@@ -73,6 +88,7 @@ python -m tools.stickers sample 1 480              # water sample bottle labels
 python -m tools.publish_sites forms/sites.csv      # new site list → ODK Central and the database
 python -m tools.create_user anas "Dr. Anas Abdulaziz" scientist
 python forms/build_forms.py forms/dist             # rebuild the forms after a question change
+python -m tools.publish_forms                      # publish all forms to ODK Central (inside the app container)
 python -m tools.data_dictionary                    # refresh docs/data_dictionary.md
 python -m pytest -q tests                          # run the tests
 ```

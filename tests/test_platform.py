@@ -192,3 +192,136 @@ def test_kobo_submission_ingests_like_odk(client):
     rejected = dict(rec, **{"_validation_status": {"uid": "validation_status_not_approved"}})
     assert sync_kobo.ingest_kobo(db, "obs_water_sample", rejected) is False
     db.close()
+
+
+# ------------------------------------------------------------------ household reports and data sources
+
+def _report(form_id, **f):
+    from tools.seed_demo import sub
+    from app.db import SessionLocal
+    db = SessionLocal()
+    s = sub(**f)
+    assert sync_odk.ingest(db, form_id, s)
+    db.commit()
+    db.close()
+    return s["__id"]
+
+
+def test_report_adds_new_person_with_name_kept_private(client):
+    from datetime import date
+    from app.db import SessionLocal
+    from app.models import Person, PersonPII, Report
+    iid = _report("obs_report_diarrhoea", today=date.today().isoformat(), role="ward", hh_id="DMA-002", camp_site="DMA",
+                  consent_named="yes", in_list_eff="no", person_id="OBS-N-abc123", new_name="Test Person",
+                  p_age="34", p_sex="f", condition="diarrhoea", danger="no",
+                  impact={"days_ill": "3", "activity": "daily_wage", "work_days": "2", "carer_days": "1"})
+    db = SessionLocal()
+    r = db.get(Report, iid)
+    assert r.person_id == "OBS-N-abc123" and r.water_class == "water_borne" and r.work_days == 2 and r.carer_days == 1
+    assert "new_name" not in r.data and db.get(PersonPII, "OBS-N-abc123").name == "Test Person"
+    assert db.get(Person, "OBS-N-abc123").hh_id == "DMA-002"
+    db.close()
+
+
+def test_anonymous_report_has_no_person(client):
+    from datetime import date
+    from app.db import SessionLocal
+    from app.models import Report
+    iid = _report("obs_report_health", today=date.today().isoformat(), role="volunteer", hh_id="DMB-003", camp_site="DMB",
+                  consent_named="no", person_id="", p_age="70", p_sex="m", condition="lepto",
+                  impact={"days_ill": "5", "activity": "retired", "carer_days": "2"})
+    db = SessionLocal()
+    r = db.get(Report, iid)
+    assert r.person_id is None and not r.named and r.water_class == "water_contact" and r.work_days == 0
+    db.close()
+
+
+def test_report_visibility_by_role(client):
+    ward = client.get("/api/reports?days=365", headers=login(client, "admin")).json()
+    assert ward["rows"]
+    sci = client.get("/api/reports?days=365", headers=login(client, "scientist")).json()
+    assert all(r["name"] is None for r in sci["rows"])
+    doc = client.get("/api/reports?days=365", headers=login(client, "doctor")).json()
+    assert any(r["name"] for r in doc["rows"])
+    w = client.get("/api/reports?days=365", headers=login(client, "coordinator")).json()
+    assert {f["form_id"] for f in w["forms"]} >= {"obs_report_diarrhoea", "obs_report_health"}
+
+
+def test_ward_sees_no_names_and_only_allowed_forms(client):
+    from app.db import SessionLocal
+    from app.models import User
+    from app.security import hash_password
+    db = SessionLocal()
+    db.merge(User(username="ward2", full_name="Ward two", role="ward", sites="*", password_hash=hash_password(PW)))
+    db.commit()
+    db.close()
+    r = client.get("/api/reports?days=365", headers=login(client, "ward2")).json()
+    assert "obs_report_health" not in {f["form_id"] for f in r["forms"]}
+    assert r["rows"] and all(x["name"] is None and x["hh_id"] is None and x["person_id"] is None for x in r["rows"])
+
+
+def test_workdays_and_wage(client):
+    h = login(client, "admin")
+    w = client.get("/api/stats/workdays", headers=h).json()
+    assert w["episodes"] > 0 and w["productive_days"] == w["work_days"] + w["carer_days"] and w["value_rs"] is None
+    assert client.post("/api/admin/settings/wage", json={"daily_wage_rs": 500}, headers=h).status_code == 200
+    w2 = client.get("/api/stats/workdays", headers=h).json()
+    assert w2["value_rs"] == w2["productive_days"] * 500
+    assert client.post("/api/admin/settings/wage", json={"daily_wage_rs": 500},
+                       headers=login(client, "coordinator")).status_code == 403
+
+
+def test_admin_controls_report_form_visibility(client):
+    h = login(client, "admin")
+    forms = client.get("/api/admin/report-forms", headers=h).json()
+    assert {f["form_id"] for f in forms} >= {"obs_report_diarrhoea", "obs_report_health", "obs_report_onehealth"}
+    body = {"title": "Report: health issue", "visible_roles": ["doctor"], "active": True}
+    assert client.post("/api/admin/report-forms/obs_report_health", json=body, headers=h).status_code == 200
+    asha = client.get("/api/reports?days=365", headers=login(client, "asha")).json()
+    assert "obs_report_health" not in {f["form_id"] for f in asha["forms"]}
+    body["visible_roles"] = ["coordinator", "scientist", "doctor", "asha"]
+    client.post("/api/admin/report-forms/obs_report_health", json=body, headers=h)
+    assert client.get("/api/admin/report-forms", headers=login(client, "coordinator")).status_code == 403
+
+
+def test_report_tasks_and_cluster_decision(client):
+    from datetime import date
+    for i in range(3):
+        _report("obs_report_diarrhoea", today=date.today().isoformat(), role="asha", hh_id=f"DF1-0{40 + i}",
+                camp_site="DF1", consent_named="no", p_age="30", condition="diarrhoea", danger="yes" if i == 0 else "no",
+                impact={"days_ill": "2", "activity": "home", "work_days": "1"})
+    tasks = client.get("/api/tasks", headers=login(client, "admin")).json()
+    assert any(t["kind"] == "report" and t["hh_id"] == "DF1-040" and "Urgent" in t["title"] for t in tasks)
+    client.post("/api/rules/run", headers=login(client, "coordinator"))
+    dec = client.get("/api/decisions", headers=login(client, "admin")).json()
+    assert any(d["site"] == "DF1" and "cluster" in d["title"] for d in dec)
+
+
+def test_data_sources_panel(client):
+    h = login(client, "coordinator")
+    srcs = client.get("/api/admin/sources", headers=h).json()
+    assert [s["key"] for s in srcs] == ["open_meteo", "imd", "tides", "odk", "sarvam"]
+    imd = next(s for s in srcs if s["key"] == "imd")
+    assert imd["needs_key"] and imd["key_present"] is False and "IMD" in imd["coverage"]
+    r = client.post("/api/admin/sources/imd/fetch", headers=h).json()
+    assert r["ok"] is False and "not set up" in r["result"]
+    assert client.post("/api/admin/sources/tides/fetch", headers=h).status_code == 404
+    assert client.get("/api/admin/sources", headers=login(client, "asha")).status_code == 403
+    after = next(s for s in client.get("/api/admin/sources", headers=h).json() if s["key"] == "imd")
+    assert after["last_error"] and after["last_ok"] is None
+
+
+def test_sync_skips_unpublished_report_forms():
+    from app.db import SessionLocal
+
+    class FakeCentral:
+        def submissions(self, form_id, since=None):
+            if form_id == "obs_report_onehealth":
+                raise sync_odk.FormMissing(form_id)
+            return iter([])
+
+    db = SessionLocal()
+    counts = sync_odk.run_sync(db, FakeCentral())
+    db.close()
+    assert counts["obs_report_onehealth"] == "not published" and counts["obs_camp_registration"] == 0
+    assert "obs_report_diarrhoea" in counts

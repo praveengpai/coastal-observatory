@@ -51,6 +51,25 @@ servers outside India. Use this for the pilot and training, keep backups, and pl
 Changing the site list: upload the new `sites.csv` to each Kobo form's Media and redeploy; load it into
 the Observatory on the Admin tab.
 
+### Updating the server after a code change
+
+```bash
+cd /opt/observatory && git pull && docker compose up -d --build app jobs
+docker compose exec app python -m tools.publish_forms     # only when the forms changed
+```
+
+New tables are created automatically when the app starts. `publish_forms` uses the sync account, publishes
+camp registration first (it creates the household list the report forms read), attaches `sites.csv`, and
+gives the report forms to the Field team, Ward members, NIO and Training phone accounts (creating any that
+are missing). Phones pick up the new forms when they next refresh.
+
+### IMD data
+
+The Admin tab's **Data sources** panel lists every outside source, when it last updated and whether its key
+is present. IMD shares its API with registered organisations (api.imd.gov.in). Once access is granted, put
+the key and endpoint in `.env` (`OBS_IMD_API_KEY`, `OBS_IMD_BASE_URL`, `OBS_IMD_DISTRICT`) and complete
+`app/imd.py` from IMD's API reference; it then runs with the weather job.
+
 ## 1. Server requirements (to request from NIO IT)
 
 - Ubuntu 22.04/24.04 LTS VM: 4 vCPU, 8–16 GB RAM, 200 GB disk (photos from water samples take most space)
@@ -117,7 +136,7 @@ gpg --decrypt observatory-YYYYMMDD-HHMM.dump.gpg | docker compose exec -T db pg_
 
 ## Not tested in this build environment
 
-The Docker image could not be built here (no Docker daemon). The code, all four forms and all 35
+The Docker image could not be built here (no Docker daemon). The code, all seven forms and all 45
 tests were verified on Python 3.13 with SQLite and with PostgreSQL 16. Build and smoke-test the
 image on the staging server first. `deploy/install_vps.sh` was syntax-checked but not run on a real
 server; confirm the ODK Central reverse-proxy settings (step 3 of the script) against the ODK guide for

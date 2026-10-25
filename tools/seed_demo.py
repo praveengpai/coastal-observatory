@@ -197,6 +197,43 @@ def main(reset=False):
                 refgrp={"ref_person": r.person_id, "ref_status": rnd.choice(["went", "went", "went", "not_yet"])},
                 illness={"anyone_ill": "no"}, advgrp={"advice": "none"}))
     db.commit()
+    # household reports over the past year: diarrhoea, other illness and One Health events
+    from app import reports as rpt
+    from app.models import Person
+    rpt.ensure_defaults(db)
+    activities = ["daily_wage", "fishing", "home", "student", "retired", "child", "salaried"]
+    for code, label, st, lat, lon, positivity, tds_med, vuln in DEMO_SITES:
+        people = db.query(Person).filter(Person.site_code == code).all()
+        for _ in range(int(8 + positivity * 60)):
+            day = today - timedelta(days=rnd.randint(0, 360))
+            person = rnd.choice(people)
+            named = rnd.random() < 0.85
+            act = "child" if person.age < 5 else "student" if person.age < 18 else "retired" if person.age >= 65 else rnd.choice(activities[:3] + activities[6:])
+            ill = rnd.randint(1, 7)
+            impact = {"onset": (day - timedelta(days=ill)).isoformat(), "still_ill": "no", "days_ill": ill, "activity": act,
+                      "work_days": rnd.randint(1, ill) if act in rpt.WORKING else None,
+                      "school_days": rnd.randint(1, ill) if act == "student" else None,
+                      "carer_days": rnd.choice([0, 0, 1, 2, 3]) if act in ("child", "student", "retired") else rnd.choice([0, 0, 1]),
+                      "care": rnd.choice(["home", "pharmacy", "govt", "govt", "private", "admitted"]),
+                      "cost_rs": rnd.choice([0, 50, 200, 500, 1500])}
+            base = dict(today=day.isoformat(), role=rnd.choice(["asha", "volunteer", "ward"]), hh_id=person.hh_id,
+                        camp_site=code, consent_named="yes" if named else "no", in_list_eff="yes",
+                        person_id=person.person_id if named else "", p_age=person.age, p_sex=person.sex, impact=impact)
+            if rnd.random() < 0.65:
+                blood = rnd.random() < 0.1
+                ingest(db, "obs_report_diarrhoea", sub(**base, dd={"stools_day": rnd.randint(3, 10), "blood": "yes" if blood else "no",
+                                                                   "vomiting": rnd.choice(["yes", "no"]), "dehyd": rnd.choice(["none"] * 8 + ["sunken_eyes"])},
+                                                       condition="dysentery" if blood else "diarrhoea",
+                                                       danger="no" if rnd.random() < 0.9 else "yes"))
+            else:
+                cond = rnd.choice(["fever", "fever", "jaundice", "lepto", "vector", "skin_water", "resp", "heat"])
+                ingest(db, "obs_report_health", sub(**base, condition=cond, danger="yes" if cond in ("jaundice", "lepto", "heat") else "no"))
+        for _ in range(rnd.randint(1, 4)):
+            day = today - timedelta(days=rnd.randint(0, 200))
+            ingest(db, "obs_report_onehealth", sub(today=day.isoformat(), role="volunteer", where="place", camp_site=code,
+                                                   ev={"event": rnd.choice(["mosquito", "rats", "fish_kill", "sewage", "animal_died", "flood"]),
+                                                       "people_ill": rnd.choice(["yes", "no", "dk"])}))
+    db.commit()
     rules.generate(db, [s.code for s in site_codes(db)])
     for a in db.query(Advisory).all():
         x = rnd.random()

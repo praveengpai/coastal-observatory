@@ -1,6 +1,7 @@
 # Field guide: setting up a phone and using the forms
 
-For ASHAs, volunteers, One Health volunteers, the MSW and the NIO team. Print one page per person.
+For ASHAs, volunteers, ward members, One Health volunteers, the MSW and the NIO team. Print one page per person.
+Phone installation in pictures, in English and Malayalam: open `/install` on the Observatory's web address.
 Malayalam text in the forms is a machine-assisted translation for accessibility; English is the reference.
 
 ## Set up the phone once (coordinator, 10 minutes)
@@ -30,6 +31,24 @@ Malayalam text in the forms is a machine-assisted translation for accessibility;
 - Use **Household visit** for every visit: scan the household sticker, record illness counts,
   referral follow-up, elder checks and the advice you gave. This closes your tasks on the dashboard.
 - Use **Water sample** for every bottle: scan the bottle label, stand next to the source for GPS.
+
+## Reporting from a household (ASHAs, volunteers and ward members)
+
+Every house has a QR sticker on its door. To report:
+
+1. Open the report form: **Report: diarrhoeal disease**, **Report: health issue** or **Report: One Health event**.
+2. **Scan the door sticker.** The household opens.
+3. Ask whether the family agrees to share the report, with the person's name, with the health team.
+   - **Yes:** pick the person from the household list. Not on the list? Choose "No, add a new person",
+     and they are added to the house for next time, on every phone, after the next sync.
+   - **No:** enter only age and sex. The report still counts, without a name.
+4. Answer the questions, including **days unable to work**, **school days missed** and **days a family member
+   stayed home to care**. These add up to the workdays lost on the dashboard.
+5. If the form shows a **danger sign** message, act on it now: give ORS and take the person to the PHC.
+
+The One Health form is for things that affect health but are not a person's illness: sick or dead animals,
+dead fish, many rats, mosquito breeding, flooding, water that changed colour or smell, sewage overflow.
+Take a photo if useful, but never of people.
 
 ## Stickers
 

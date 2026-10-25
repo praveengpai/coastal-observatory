@@ -3,14 +3,15 @@
 Each form has an `ingest_*` function that takes one flattened submission (a dict of
 field name -> value). They are idempotent: re-running a sync never duplicates rows.
 """
+import sys
 from datetime import date, datetime, timezone
 
 import requests
 from sqlalchemy.orm import Session
 
-from . import config
+from . import config, reports
 from .models import (HomeVisit, Household, HouseholdSurvey, LabResult, Person, PersonPII, Registration,
-                     Site, StationRecord, SyncState, WaterSample)
+                     ReportForm, Site, StationRecord, SyncState, WaterSample)
 
 PII_FIELDS = {"name", "phone", "home_address"}
 DR_ORDER = ["none", "ungradable", "mild", "moderate", "severe", "pdr"]
@@ -200,11 +201,21 @@ def ingest(db: Session, form_id: str, submission: dict):
     f = flatten(submission)
     if f.get("_review_state") == "rejected":
         return False
-    INGESTERS[form_id](db, f)
+    if reports.is_report_form(form_id):
+        reports.ingest_report(db, form_id, f, helpers=sys.modules[__name__])
+    else:
+        INGESTERS[form_id](db, f)
     return True
 
 
 # ------------------------------------------------------------------ ODK Central client
+
+class FormMissing(Exception):
+    """The form is not (yet) published on ODK Central."""
+
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 class Central:
     def __init__(self, url=None, email=None, password=None, project=None):
@@ -226,6 +237,8 @@ class Central:
             params["$skip"] = skip
             r = self.s.get(f"{self.url}/v1/projects/{self.project}/forms/{form_id}.svc/Submissions",
                            params=params, timeout=60)
+            if r.status_code == 404:
+                raise FormMissing(form_id)
             r.raise_for_status()
             rows = r.json().get("value", [])
             yield from rows
@@ -234,19 +247,54 @@ class Central:
             skip += page
 
 
+    # ---- form management (used by the Admin tab's report-form manager)
+
+    def app_users(self):
+        r = self.s.get(f"{self.url}/v1/projects/{self.project}/app-users", timeout=30)
+        r.raise_for_status()
+        return [{"id": a["id"], "name": a["displayName"]} for a in r.json() if not a.get("deletedAt")]
+
+    def publish_form(self, form_id: str, xlsx: bytes, app_user_ids, version: str):
+        """Upload an XLSForm (new form or new draft), publish it and give the chosen phone accounts access."""
+        base = f"{self.url}/v1/projects/{self.project}/forms"
+        headers = {"Content-Type": XLSX, "X-XlsForm-FormId-Fallback": form_id}
+        r = self.s.post(f"{base}?ignoreWarnings=true", data=xlsx, headers=headers, timeout=120)
+        if r.status_code == 409:
+            r = self.s.post(f"{base}/{form_id}/draft?ignoreWarnings=true", data=xlsx, headers=headers, timeout=120)
+        if r.status_code >= 400:
+            raise RuntimeError(f"ODK Central refused the form: {r.text[:300]}")
+        r = self.s.post(f"{base}/{form_id}/draft/publish", params={"version": version}, timeout=60)
+        if r.status_code >= 400:
+            raise RuntimeError(f"Publishing failed: {r.text[:300]}")
+        roles = {x["system"]: x["id"] for x in self.s.get(f"{self.url}/v1/roles", timeout=30).json()}
+        for uid in app_user_ids:
+            r = self.s.post(f"{base}/{form_id}/assignments/{roles['app-user']}/{int(uid)}", timeout=30)
+            if r.status_code not in (200, 409):
+                raise RuntimeError(f"Could not give phone account {uid} access: {r.text[:200]}")
+
+
+def forms_to_sync(db: Session):
+    return list(INGESTERS) + [x.form_id for x in db.query(ReportForm).filter(ReportForm.active.is_(True))]
+
+
 def run_sync(db: Session, central: Central | None = None) -> dict:
-    """Pull new submissions for all four forms. Returns counts per form."""
+    """Pull new submissions for every form, including active report forms. Returns counts per form."""
     central = central or Central()
     counts = {}
-    for form_id in INGESTERS:
+    for form_id in forms_to_sync(db):
         state = db.get(SyncState, form_id) or SyncState(form_id=form_id, count=0)
         n, latest = 0, state.last_submission
-        for sub in central.submissions(form_id, since=state.last_submission):
-            if ingest(db, form_id, sub):
-                n += 1
-            sd = sub.get("__system", {}).get("submissionDate")
-            if sd and (latest is None or sd > latest):
-                latest = sd
+        try:
+            for sub in central.submissions(form_id, since=state.last_submission):
+                if ingest(db, form_id, sub):
+                    n += 1
+                sd = sub.get("__system", {}).get("submissionDate")
+                if sd and (latest is None or sd > latest):
+                    latest = sd
+        except FormMissing:
+            db.rollback()
+            counts[form_id] = "not published"
+            continue
         state.last_submission, state.last_run, state.count = latest, datetime.utcnow(), (state.count or 0) + n
         db.merge(state)
         db.commit()

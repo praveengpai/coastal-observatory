@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from . import analytics, config
+from . import analytics, config, reports
 from .models import Advisory, Decision, HomeVisit, Person, PersonPII, StationRecord
 
 TEMPLATES = {
@@ -79,6 +79,10 @@ def generate(db: Session, sites, today: date | None = None):
             n_dec += _upsert_decision(db, f"salinity:{code}:{today.year}", code,
                                       "Explore an alternative drinking-water source and add BP screening",
                                       f"Median water TDS {m['tds_median']} mg/L")
+    for code, n, kinds in reports.clusters(db, sites, today):
+        n_dec += _upsert_decision(db, f"cluster:{code}:{week[0]}-{week[1]}", code,
+                                  "Investigate a cluster of water-related illness: test the water sources",
+                                  f"{n} reports in 7 days ({', '.join(kinds)})")
     db.commit()
     return {"advisories_created": n_adv, "decisions_created": n_dec}
 
@@ -130,6 +134,7 @@ def asha_tasks(db: Session, sites, show_pii: bool, today: date | None = None):
             tasks.append({"kind": "elder", "site": g.site_code, "person_id": g.person_id,
                           "title": f"Check on elder before {why.split(',')[0]}",
                           "detail": (who.name if who else g.person_id) + f": {why}", "since": today.isoformat()})
+    tasks += reports.tasks(db, sites, show_pii, today)
     return tasks
 
 

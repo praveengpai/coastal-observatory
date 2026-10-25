@@ -255,3 +255,57 @@ class SyncState(Base):
     last_submission: Mapped[str | None] = mapped_column(String(40))
     last_run: Mapped[datetime | None] = mapped_column(DateTime)
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReportForm(Base):
+    """A household report form (form ID starting obs_report_) and which dashboard roles may see its reports."""
+    __tablename__ = "report_form"
+    form_id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120))
+    visible_roles: Mapped[str] = mapped_column(String(120), default="admin coordinator doctor asha")
+    phone_groups: Mapped[str] = mapped_column(String(400), default="")     # display only: who can fill it
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Report(Base):
+    """One household report. Names live in person_pii; this row holds no direct identifiers."""
+    __tablename__ = "report"
+    instance_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    form_id: Mapped[str] = mapped_column(String(60), index=True)
+    site_code: Mapped[str] = mapped_column(String(8), index=True)
+    hh_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    person_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    named: Mapped[bool] = mapped_column(Boolean, default=False)
+    reporter_role: Mapped[str | None] = mapped_column(String(12))
+    reported_on: Mapped[date | None] = mapped_column(Date, index=True)
+    onset: Mapped[date | None] = mapped_column(Date)
+    age: Mapped[int | None] = mapped_column(Integer)
+    sex: Mapped[str | None] = mapped_column(String(2))
+    condition: Mapped[str | None] = mapped_column(String(20), index=True)
+    water_class: Mapped[str | None] = mapped_column(String(16), index=True)  # water_borne | water_washed | water_contact | vector
+    danger: Mapped[bool | None] = mapped_column(Boolean)
+    days_ill: Mapped[int | None] = mapped_column(Integer)
+    activity: Mapped[str | None] = mapped_column(String(12))
+    work_days: Mapped[int] = mapped_column(Integer, default=0)
+    school_days: Mapped[int] = mapped_column(Integer, default=0)
+    carer_days: Mapped[int] = mapped_column(Integer, default=0)
+    care: Mapped[str | None] = mapped_column(String(10))
+    cost_rs: Mapped[int | None] = mapped_column(Integer)
+    events: Mapped[str | None] = mapped_column(String(200))       # One Health events, space-separated
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Setting(Base):
+    __tablename__ = "setting"
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[str | None] = mapped_column(String(200))
+
+
+class SourceStatus(Base):
+    """When each outside data source last answered, for the Admin tab's Data sources panel."""
+    __tablename__ = "source_status"
+    key: Mapped[str] = mapped_column(String(20), primary_key=True)
+    last_attempt: Mapped[datetime | None] = mapped_column(DateTime)
+    last_ok: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    detail: Mapped[str | None] = mapped_column(String(300))

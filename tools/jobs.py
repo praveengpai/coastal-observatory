@@ -1,12 +1,12 @@
 """Scheduled jobs, run from cron inside the app container (see deploy/crontab).
 
     python -m tools.jobs sync      # pull new ODK submissions (every 15 minutes)
-    python -m tools.jobs weather   # refresh the 7-day forecast (twice a day)
+    python -m tools.jobs weather   # refresh the 7-day forecast, and IMD once access is set up (twice a day)
     python -m tools.jobs rules     # draft advisories and ward decisions (hourly)
 """
 import sys
 
-from app import analytics, config, rules, sync_odk, weather
+from app import analytics, config, imd, rules, sources
 from app.db import SessionLocal, init_db
 
 if __name__ == "__main__":
@@ -14,13 +14,17 @@ if __name__ == "__main__":
     init_db()
     db = SessionLocal()
     if job == "sync":
-        if config.FORM_SERVER == "kobo":
-            from app import sync_kobo
-            print(sync_kobo.run_sync(db))
+        if config.FORM_SERVER == "odk" and not config.ODK_URL:
+            print("ODK Central not configured")
         else:
-            print(sync_odk.run_sync(db) if config.ODK_URL else "ODK Central not configured")
+            print(sources.fetch(db, "odk"))
     elif job == "weather":
-        print(weather.fetch_forecast(db), "days")
+        print(sources.fetch(db, "open_meteo"))
+        if imd.enabled():
+            try:
+                print(sources.fetch(db, "imd"))
+            except imd.NotReady as exc:
+                print(exc)
     elif job == "rules":
         print(rules.generate(db, [s.code for s in analytics.site_codes(db)]))
     else:

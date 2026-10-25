@@ -1,7 +1,11 @@
-"""Builds the two ODK XLSForms for the Observatory camps.
+"""Builds the Observatory's ODK XLSForms.
 
-Form 1  obs_camp_registration : welcome desk + waiting-area questionnaire
-Form 2  obs_camp_station      : measurements, eye, dental, geriatric and doctor stations
+obs_camp_registration : welcome desk + waiting-area questionnaire; adds each person to the phones' household list
+obs_camp_station      : measurements, eye, dental, geriatric and doctor stations
+obs_household_visit   : ASHA and volunteer visits between camps
+obs_water_sample      : water samples and Aquadip results
+obs_report_*          : household reports (scan the door sticker, pick or add the person, report);
+                        report_form_template.xlsx is the starting point for new report forms
 """
 import sys
 from openpyxl import Workbook
@@ -14,7 +18,7 @@ SURVEY_COLS = [
     "type", "name", "label::English (en)", "label::Malayalam (ml)",
     "hint::English (en)", "hint::Malayalam (ml)", "required", "relevant",
     "constraint", "constraint_message::English (en)", "constraint_message::Malayalam (ml)",
-    "calculation", "default", "appearance", "parameters",
+    "calculation", "default", "appearance", "parameters", "choice_filter", "save_to",
 ]
 CHOICE_COLS = ["list_name", "name", "label::English (en)", "label::Malayalam (ml)", "site_type"]
 
@@ -25,12 +29,12 @@ VOICE_ML = "കീബോർഡിലെ മൈക്ക് അമർത്തി
 
 
 def q(t, name, en="", ml=None, hen="", hml="", req="", rel="", con="", cmsg_en="", cmsg_ml="",
-      calc="", default="", app="", params=""):
+      calc="", default="", app="", params="", cf="", save=""):
     if ml is None:
         ml = en
     if con and not cmsg_en:
         cmsg_en, cmsg_ml = CHECK_EN, CHECK_ML
-    return [t, name, en, ml, hen, hml, req, rel, con, cmsg_en, cmsg_ml, calc, default, app, params]
+    return [t, name, en, ml, hen, hml, req, rel, con, cmsg_en, cmsg_ml, calc, default, app, params, cf, save]
 
 
 def c(lst, name, en, ml=None, site_type=""):
@@ -66,7 +70,7 @@ def camp_block(role_list, role_en="Your role today", role_ml="ഇന്ന് �
     ]
 
 
-def person_scan_block(label_en, label_ml):
+def person_scan_block(label_en, label_ml, save=False):
     return [
         q("begin_group", "pid", label_en, label_ml, app="field-list"),
         q("select_one id_method", "pid_method", "Person ID: scan or type?", "വ്യക്തിയുടെ ഐഡി: സ്കാൻ ചെയ്യണോ ടൈപ്പ് ചെയ്യണോ?",
@@ -79,7 +83,8 @@ def person_scan_block(label_en, label_ml):
           hml="ഉദാ: OBS-P-000123", req="yes", rel="${pid_method}='type'", con=PERSON_RE,
           cmsg_en="Use the format OBS-P-000123.", cmsg_ml="OBS-P-000123 എന്ന രൂപത്തിൽ നൽകുക."),
         q("end_group", "pid"),
-        q("calculate", "person_id", calc="if(${pid_method}='scan', ${pid_scan}, ${pid_type})"),
+        q("calculate", "person_id", calc="if(${pid_method}='scan', ${pid_scan}, ${pid_type})",
+          save="person_id" if save else ""),
     ]
 
 
@@ -100,6 +105,8 @@ def common_choices():
 def form_registration():
     s = camp_block("reg_role")
     s += [
+        # The household member list on every phone (an ODK entity list). Registration adds each new person once.
+        q("csv-external", "persons"),
         q("begin_group", "consent", "Consent", "സമ്മതം", app="field-list"),
         q("note", "consent_care",
           "[Replace with ethics-approved text] Check-ups and medicines at this camp are free for everyone.",
@@ -110,7 +117,7 @@ def form_registration():
           req="yes"),
         q("end_group", "consent"),
     ]
-    s += person_scan_block("Person ID", "വ്യക്തിയുടെ ഐഡി")
+    s += person_scan_block("Person ID", "വ്യക്തിയുടെ ഐഡി", save=True)
     s += [
         q("begin_group", "hid", "Household ID", "വീടിന്റെ ഐഡി", app="field-list"),
         q("select_one id_method", "hh_method", "Household ID: scan or type?", "വീടിന്റെ ഐഡി: സ്കാൻ ചെയ്യണോ ടൈപ്പ് ചെയ്യണോ?",
@@ -122,13 +129,13 @@ def form_registration():
           hml="ഉദാ: CVB-014", req="yes", rel="${hh_method}='type'", con=HH_RE,
           cmsg_en="Use the format CVB-014.", cmsg_ml="CVB-014 എന്ന രൂപത്തിൽ നൽകുക."),
         q("end_group", "hid"),
-        q("calculate", "hh_id", calc="if(${hh_method}='scan', ${hh_scan}, ${hh_type})"),
+        q("calculate", "hh_id", calc="if(${hh_method}='scan', ${hh_scan}, ${hh_type})", save="hh_id"),
 
         q("begin_group", "person", "About the person", "വ്യക്തിയെ കുറിച്ച്", app="field-list"),
         q("text", "name", "Name", "പേര്", hen="Manglish or Malayalam keyboard both work.",
-          hml="മംഗ്ലീഷ് അല്ലെങ്കിൽ മലയാളം കീബോർഡ് ഉപയോഗിക്കാം.", req="yes"),
-        q("integer", "age", "Age (years)", "പ്രായം (വർഷം)", req="yes", con=". >= 0 and . <= 120"),
-        q("select_one sex", "sex", "Sex", "ലിംഗം", req="yes", app="horizontal-compact"),
+          hml="മംഗ്ലീഷ് അല്ലെങ്കിൽ മലയാളം കീബോർഡ് ഉപയോഗിക്കാം.", req="yes", save="full_name"),
+        q("integer", "age", "Age (years)", "പ്രായം (വർഷം)", req="yes", con=". >= 0 and . <= 120", save="age"),
+        q("select_one sex", "sex", "Sex", "ലിംഗം", req="yes", app="horizontal-compact", save="sex"),
         q("text", "phone", "Phone number (for results)", "ഫോൺ നമ്പർ (ഫലം അറിയിക്കാൻ)", app="numbers",
           con="regex(., '^[6-9][0-9]{9}$')", cmsg_en="Enter a 10-digit mobile number.",
           cmsg_ml="10 അക്ക മൊബൈൽ നമ്പർ നൽകുക."),
@@ -310,9 +317,11 @@ def form_registration():
         ("never", "Never", "ഒരിക്കലുമില്ല"), ("past", "Used in the past", "മുമ്പ് ഉപയോഗിച്ചിരുന്നു"),
         ("current", "Uses now", "ഇപ്പോൾ ഉപയോഗിക്കുന്നു")]]
     settings = {"form_title": "Observatory camp: registration", "form_id": "obs_camp_registration",
-                "version": "2026102401", "default_language": "English (en)",
+                "version": "2026102501", "default_language": "English (en)",
                 "instance_name": "concat(${person_id}, ' · ', ${name})"}
-    return s, ch, settings
+    entities = {"list_name": "persons", "label": "concat(${name}, ' (', ${age}, ')')",
+                "create_if": "count(instance('persons')/root/item[person_id = ${person_id}]) = 0"}
+    return s, ch, settings, entities
 
 
 # ================================================================ FORM 2
@@ -583,7 +592,7 @@ BODY_FONT = Font(name="Arial")
 GROUP_FILL = PatternFill("solid", fgColor="E7F3F2")
 
 
-def write(path, survey, choices, settings):
+def write(path, survey, choices, settings, entities=None):
     wb = Workbook()
     ws = wb.active
     ws.title = "survey"
@@ -598,8 +607,15 @@ def write(path, survey, choices, settings):
     keys = list(settings)
     wst.append(keys)
     wst.append([settings[k] for k in keys])
-    for sheet, widths in [(ws, [22, 18, 48, 48, 30, 30, 9, 30, 30, 26, 26, 34, 24, 18, 12]),
-                          (wc, [14, 14, 36, 36, 12]), (wst, [34] * len(keys))]:
+    sheets = [(ws, [22, 18, 48, 48, 30, 30, 9, 30, 30, 26, 26, 34, 24, 18, 12, 24, 14]),
+              (wc, [14, 14, 36, 36, 12]), (wst, [34] * len(keys))]
+    if entities:
+        we = wb.create_sheet("entities")
+        ekeys = list(entities)
+        we.append(ekeys)
+        we.append([entities[k] for k in ekeys])
+        sheets.append((we, [16, 40, 60]))
+    for sheet, widths in sheets:
         for i, w in enumerate(widths, start=1):
             sheet.column_dimensions[sheet.cell(1, i).column_letter].width = w
         for row in sheet.iter_rows():
@@ -617,7 +633,7 @@ def write(path, survey, choices, settings):
     wb.save(path)
 
 
-def hh_scan_block(rel=""):
+def hh_scan_block(rel="", save=False):
     return [
         q("begin_group", "hid", "Household ID", "വീടിന്റെ ഐഡി", rel=rel, app="field-list"),
         q("select_one id_method", "hh_method", "Household ID: scan or type?", "വീടിന്റെ ഐഡി: സ്കാൻ ചെയ്യണോ ടൈപ്പ് ചെയ്യണോ?",
@@ -629,7 +645,7 @@ def hh_scan_block(rel=""):
           hml="ഉദാ: CVB-014", req="yes", rel="${hh_method}='type'", con=HH_RE,
           cmsg_en="Use the format CVB-014.", cmsg_ml="CVB-014 എന്ന രൂപത്തിൽ നൽകുക."),
         q("end_group", "hid"),
-        q("calculate", "hh_id", calc="if(${hh_method}='scan', ${hh_scan}, ${hh_type})"),
+        q("calculate", "hh_id", calc="if(${hh_method}='scan', ${hh_scan}, ${hh_type})", save="hh_id" if save else ""),
     ]
 
 
@@ -793,11 +809,267 @@ def form_water_sample():
     return s, ch, settings
 
 
+# ================================================================ REPORT FORMS
+# Any form whose ID starts with obs_report_ is a "report form". The Observatory reads the field
+# names below from every report form, so a new report form made by copying one of these keeps working.
+
+REPORT_ROLES = FIELD_ROLES + [("ward", "Ward member", "വാർഡ് മെമ്പർ")]
+DANGER_NONE = "not(selected(${dehyd}, 'none'))"
+
+
+def report_start(form_title_en, form_title_ml):
+    """Reporter, household (scanned from the door sticker) and the site derived from it."""
+    return [
+        q("start", "start"), q("end", "end"), q("today", "today"), q("deviceid", "deviceid"),
+        q("csv-external", "persons"),
+        q("note", "intro", form_title_en + ". Scan the sticker on the house door to begin. "
+          "(Malayalam text is a machine-assisted translation for accessibility; English is the reference.)",
+          form_title_ml + ". തുടങ്ങാൻ വീടിന്റെ വാതിലിലെ സ്റ്റിക്കർ സ്കാൻ ചെയ്യുക. "
+          "(മലയാളം യന്ത്രസഹായത്തോടെയുള്ള വിവർത്തനമാണ്; ഇംഗ്ലീഷ് പാഠമാണ് ആധികാരികം.)"),
+        q("select_one report_role", "role", "You are reporting as", "നിങ്ങൾ റിപ്പോർട്ട് ചെയ്യുന്നത്", req="yes",
+          default="${last-saved#role}"),
+    ] + hh_scan_block(save=True) + [
+        q("calculate", "camp_site", calc="substring-before(${hh_id}, '-')"),
+        q("calculate", "n_members", calc="count(instance('persons')/root/item[hh_id = ${hh_id}])"),
+    ]
+
+
+def report_person():
+    """Consent, then pick the person from the household list or add them. Without consent: age and sex only."""
+    ON_LIST = "${in_list_eff}='yes'"
+    NEW = "${consent_named}='yes' and ${in_list_eff}='no'"
+    return [
+        q("select_one yes_no", "consent_named",
+          "Does the family agree to share this report, with the person's name, with the health team (ASHA and doctor)?",
+          "ഈ റിപ്പോർട്ട് പേര് സഹിതം ആരോഗ്യ സംഘവുമായി (ആശാ പ്രവർത്തക, ഡോക്ടർ) പങ്കുവയ്ക്കാൻ കുടുംബം സമ്മതിക്കുന്നുണ്ടോ?",
+          req="yes", app="horizontal-compact"),
+        q("note", "anon_note", "That is fine. The report will be kept without a name.",
+          "കുഴപ്പമില്ല. പേരില്ലാതെ റിപ്പോർട്ട് സൂക്ഷിക്കും.", rel="${consent_named}='no'"),
+        q("begin_group", "who", "Who is ill?", "ആർക്കാണ് അസുഖം?", rel="${consent_named}='yes'", app="field-list"),
+        q("select_one in_list", "in_list", "Is the person on this household's list?",
+          "ഈ വ്യക്തി വീട്ടിലെ പട്ടികയിൽ ഉണ്ടോ?", req="yes", rel="${n_members} > 0"),
+        q("select_one_from_file persons.csv", "person", "Choose the person", "വ്യക്തിയെ തിരഞ്ഞെടുക്കുക", req="yes",
+          rel="${n_members} > 0 and ${in_list}='yes'", cf="hh_id = ${hh_id}"),
+        q("note", "none_listed", "No one from this house is on the list yet. Add the person below.",
+          "ഈ വീട്ടിൽ നിന്ന് ആരും പട്ടികയിൽ ഇല്ല. താഴെ ചേർക്കുക.", rel="${n_members} = 0"),
+        q("end_group", "who"),
+        q("calculate", "in_list_eff", calc="if(${n_members} = 0, 'no', ${in_list})"),
+        q("begin_group", "newp", "Add a person to this household", "ഈ വീട്ടിലേക്ക് ഒരാളെ ചേർക്കുക", rel=NEW,
+          app="field-list"),
+        q("text", "new_name", "Name", "പേര്", hen="Manglish or Malayalam keyboard both work.",
+          hml="മംഗ്ലീഷ് അല്ലെങ്കിൽ മലയാളം കീബോർഡ് ഉപയോഗിക്കാം.", req="yes", save="full_name"),
+        q("integer", "new_age", "Age (years)", "പ്രായം (വർഷം)", req="yes", con=". >= 0 and . <= 120", save="age"),
+        q("select_one sex", "new_sex", "Sex", "ലിംഗം", req="yes", app="horizontal-compact", save="sex"),
+        q("barcode", "new_card", "If they have a person ID card from a camp, scan it (optional)",
+          "ക്യാമ്പിലെ ഐഡി കാർഡ് ഉണ്ടെങ്കിൽ സ്കാൻ ചെയ്യുക (ഐച്ഛികം)", con=PERSON_RE,
+          cmsg_en="This is not a person ID sticker (format OBS-P-000123).",
+          cmsg_ml="ഇത് വ്യക്തിയുടെ ഐഡി സ്റ്റിക്കർ അല്ല (ഉദാ: OBS-P-000123)."),
+        q("end_group", "newp"),
+        q("calculate", "new_pid", calc="if(string-length(${new_card}) > 0, ${new_card}, "
+          "once(concat('OBS-N-', substr(uuid(), 0, 6))))", save="person_id"),
+        q("begin_group", "anon", "About the person", "വ്യക്തിയെ കുറിച്ച്", rel="${consent_named}='no'", app="field-list"),
+        q("integer", "anon_age", "Age (years)", "പ്രായം (വർഷം)", req="yes", con=". >= 0 and . <= 120"),
+        q("select_one sex", "anon_sex", "Sex", "ലിംഗം", req="yes", app="horizontal-compact"),
+        q("end_group", "anon"),
+        q("calculate", "person_id", calc=f"if(${{consent_named}}!='yes', '', if({ON_LIST}, "
+          "instance('persons')/root/item[name = ${person}]/person_id, ${new_pid}))"),
+        q("calculate", "p_age", calc=f"if(${{consent_named}}!='yes', ${{anon_age}}, if({ON_LIST}, "
+          "instance('persons')/root/item[name = ${person}]/age, ${new_age}))"),
+        q("calculate", "p_sex", calc=f"if(${{consent_named}}!='yes', ${{anon_sex}}, if({ON_LIST}, "
+          "instance('persons')/root/item[name = ${person}]/sex, ${new_sex}))"),
+    ]
+
+
+def report_impact():
+    """Days lost: the same questions on every illness report, so workdays lost add up across forms."""
+    WORKS = "selected(${activity}, 'daily_wage') or selected(${activity}, 'fishing') or selected(${activity}, 'salaried') " \
+            "or selected(${activity}, 'self_emp') or selected(${activity}, 'home')"
+    return [
+        q("begin_group", "impact", "Effect on daily life", "ദൈനംദിന ജീവിതത്തെ ബാധിച്ചത്", app="field-list"),
+        q("date", "onset", "When did it start?", "എപ്പോഴാണ് തുടങ്ങിയത്?", req="yes",
+          con=". <= today() and . >= today() - 60", cmsg_en="Within the past 60 days, and not in the future.",
+          cmsg_ml="കഴിഞ്ഞ 60 ദിവസത്തിനുള്ളിൽ ആയിരിക്കണം."),
+        q("select_one yes_no", "still_ill", "Still ill today?", "ഇന്നും അസുഖമുണ്ടോ?", req="yes", app="horizontal-compact"),
+        q("integer", "days_ill", "Days ill so far", "ഇതുവരെ എത്ര ദിവസം അസുഖം?", req="yes", con=". >= 0 and . <= 90"),
+        q("select_one activity", "activity", "What does this person usually do?", "ഈ വ്യക്തി സാധാരണ എന്താണ് ചെയ്യുന്നത്?",
+          req="yes"),
+        q("integer", "work_days", "Days unable to work (including home duties)", "ജോലി ചെയ്യാനാകാത്ത ദിവസങ്ങൾ (വീട്ടുജോലി ഉൾപ്പെടെ)",
+          req="yes", rel=WORKS, con=". >= 0 and . <= ${days_ill}",
+          cmsg_en="Cannot be more than the days ill.", cmsg_ml="അസുഖ ദിവസങ്ങളേക്കാൾ കൂടരുത്."),
+        q("integer", "school_days", "School or college days missed", "നഷ്ടപ്പെട്ട സ്കൂൾ / കോളേജ് ദിവസങ്ങൾ", req="yes",
+          rel="selected(${activity}, 'student')", con=". >= 0 and . <= ${days_ill}",
+          cmsg_en="Cannot be more than the days ill.", cmsg_ml="അസുഖ ദിവസങ്ങളേക്കാൾ കൂടരുത്."),
+        q("integer", "carer_days", "Days a family member stayed away from work to look after them",
+          "ഇവരെ നോക്കാൻ വീട്ടിലെ ആൾ ജോലിക്ക് പോകാതിരുന്ന ദിവസങ്ങൾ", req="yes", default="0", con=". >= 0 and . <= 90"),
+        q("select_one care", "care", "Treatment taken", "എടുത്ത ചികിത്സ", req="yes"),
+        q("integer", "cost_rs", "Money spent on treatment and travel (₹), if known",
+          "ചികിത്സയ്ക്കും യാത്രയ്ക്കും ചെലവായ തുക (₹), അറിയാമെങ്കിൽ", con=". >= 0 and . <= 1000000"),
+        q("end_group", "impact"),
+        q("text", "notes", "Notes", "കുറിപ്പുകൾ", hen=VOICE_EN, hml=VOICE_ML, app="multiline"),
+    ]
+
+
+def report_choices():
+    ch = common_choices()
+    ch += [c("report_role", n, en, ml) for n, en, ml in REPORT_ROLES]
+    ch += [c("in_list", "yes", "Yes, choose from the list", "ഉണ്ട്, പട്ടികയിൽ നിന്ന് തിരഞ്ഞെടുക്കാം"),
+           c("in_list", "no", "No, add a new person", "ഇല്ല, പുതിയ ആളെ ചേർക്കാം")]
+    ch += [c("sex", n, en, ml) for n, en, ml in [("m", "Male", "പുരുഷൻ"), ("f", "Female", "സ്ത്രീ"), ("o", "Other", "മറ്റുള്ളവ")]]
+    ch += [c("activity", n, en, ml) for n, en, ml in [
+        ("daily_wage", "Daily wage work", "ദിവസക്കൂലി ജോലി"), ("fishing", "Fishing or fish work", "മത്സ്യബന്ധനം / മത്സ്യ ജോലി"),
+        ("salaried", "Salaried job", "ശമ്പള ജോലി"), ("self_emp", "Own business or farming", "സ്വന്തം സംരംഭം / കൃഷി"),
+        ("home", "Home duties", "വീട്ടുജോലി"), ("student", "Student", "വിദ്യാർത്ഥി"),
+        ("child", "Young child, not in school", "സ്കൂളിൽ പോകാത്ത ചെറിയ കുട്ടി"),
+        ("retired", "Retired or not working", "വിരമിച്ചു / ജോലിയില്ല")]]
+    ch += [c("care", n, en, ml) for n, en, ml in [
+        ("none", "None", "ഒന്നുമില്ല"), ("home", "Home remedy", "വീട്ടുവൈദ്യം"), ("pharmacy", "Medical shop", "മെഡിക്കൽ ഷോപ്പ്"),
+        ("govt", "PHC or government hospital", "പി.എച്ച്.സി / സർക്കാർ ആശുപത്രി"),
+        ("private", "Private clinic or hospital", "സ്വകാര്യ ആശുപത്രി"), ("admitted", "Admitted to hospital", "ആശുപത്രിയിൽ പ്രവേശിപ്പിച്ചു")]]
+    return ch
+
+
+def _settings(form_id, title, instance):
+    return {"form_title": title, "form_id": form_id, "version": "2026102501", "default_language": "English (en)",
+            "instance_name": instance}
+
+
+PERSON_ENTITY = {"list_name": "persons", "label": "concat(${new_name}, ' (', ${new_age}, ')')",
+                 "create_if": "${consent_named}='yes' and ${in_list_eff}='no'"}
+
+
+def form_report_diarrhoea():
+    s = report_start("Report diarrhoeal disease", "വയറിളക്ക രോഗം റിപ്പോർട്ട് ചെയ്യുക") + report_person()
+    s += [
+        q("begin_group", "dd", "The illness", "അസുഖം", app="field-list"),
+        q("integer", "stools_day", "Loose stools a day, at the worst", "ഏറ്റവും കൂടുതൽ ഉണ്ടായ ദിവസം എത്ര തവണ വയറിളക്കം?",
+          req="yes", con=". >= 1 and . <= 60"),
+        q("select_one yes_no", "blood", "Blood in the stool?", "മലത്തിൽ രക്തമുണ്ടോ?", req="yes", app="horizontal-compact"),
+        q("select_one yes_no", "vomiting", "Vomiting?", "ഛർദ്ദിയുണ്ടോ?", req="yes", app="horizontal-compact"),
+        q("select_multiple dehyd", "dehyd", "Danger signs now", "ഇപ്പോഴുള്ള അപകട ലക്ഷണങ്ങൾ", req="yes",
+          con=NONE_EXCL, cmsg_en=NONE_MSG_EN, cmsg_ml=NONE_MSG_ML),
+        q("end_group", "dd"),
+        q("note", "refer_now", "Danger sign: give ORS now and take the person to the PHC or hospital today.",
+          "അപകട ലക്ഷണം: ഇപ്പോൾ തന്നെ ഒ.ആർ.എസ് നൽകി ഇന്നുതന്നെ പി.എച്ച്.സി / ആശുപത്രിയിൽ എത്തിക്കുക.", rel=DANGER_NONE),
+        q("begin_group", "dd_hh", "This household", "ഈ വീട്", app="field-list"),
+        q("integer", "others_ill", "Others in this house with loose stools this week", "ഈ ആഴ്ച ഈ വീട്ടിൽ വയറിളക്കമുള്ള മറ്റുള്ളവർ",
+          req="yes", default="0", con=". >= 0 and . <= 30"),
+        q("select_one water_src", "water_src", "Drinking water used in the past week", "കഴിഞ്ഞ ആഴ്ച ഉപയോഗിച്ച കുടിവെള്ളം",
+          req="yes"),
+        q("select_one yes_no", "ors_given", "ORS given?", "ഒ.ആർ.എസ് നൽകിയോ?", req="yes", app="horizontal-compact"),
+        q("end_group", "dd_hh"),
+        q("calculate", "condition", calc="if(${blood}='yes', 'dysentery', 'diarrhoea')"),
+        q("calculate", "danger", calc=f"if({DANGER_NONE}, 'yes', 'no')"),
+    ]
+    s += report_impact()
+    ch = report_choices()
+    ch += [c("dehyd", n, en, ml) for n, en, ml in [
+        ("none", "None", "ഒന്നുമില്ല"), ("unable_drink", "Cannot drink or keeps vomiting everything", "കുടിക്കാനാകുന്നില്ല / എല്ലാം ഛർദ്ദിക്കുന്നു"),
+        ("lethargic", "Very sleepy or hard to wake", "കടുത്ത മയക്കം / ഉണർത്താൻ പ്രയാസം"), ("sunken_eyes", "Sunken eyes", "കുഴിഞ്ഞ കണ്ണുകൾ"),
+        ("little_urine", "Very little urine", "മൂത്രം വളരെ കുറവ്"), ("very_thirsty", "Very thirsty", "കടുത്ത ദാഹം")]]
+    ch += [c("water_src", n, en, ml) for n, en, ml in [
+        ("own_well", "Own well", "സ്വന്തം കിണർ"), ("shared_well", "Shared or public well", "പൊതു / പങ്കിട്ട കിണർ"),
+        ("tap", "Tap (KWA / piped)", "പൈപ്പ് വെള്ളം (KWA)"), ("tanker", "Tanker", "ടാങ്കർ വെള്ളം"),
+        ("borewell", "Borewell", "കുഴൽക്കിണർ"), ("packaged", "Bottled or can water", "കുപ്പി / കാൻ വെള്ളം"),
+        ("other", "Other", "മറ്റുള്ളവ")]]
+    return s, ch, _settings("obs_report_diarrhoea", "Report: diarrhoeal disease",
+                            "concat(${hh_id}, ' · diarrhoea · ', ${today})"), PERSON_ENTITY
+
+
+HEALTH_CONDITIONS = [
+    ("fever", "Fever", "പനി"), ("jaundice", "Yellow eyes (jaundice)", "മഞ്ഞപ്പിത്തം (കണ്ണിന് മഞ്ഞനിറം)"),
+    ("typhoid", "Typhoid, diagnosed", "ടൈഫോയ്ഡ് (സ്ഥിരീകരിച്ചത്)"),
+    ("lepto", "Leptospirosis, diagnosed or suspected", "എലിപ്പനി (സ്ഥിരീകരിച്ചതോ സംശയിക്കുന്നതോ)"),
+    ("vector", "Dengue, malaria or chikungunya", "ഡെങ്കി / മലേറിയ / ചിക്കുൻഗുനിയ"),
+    ("skin_water", "Skin infection after water contact", "വെള്ളം തട്ടിയ ശേഷം ത്വക്ക് അണുബാധ"),
+    ("eye", "Red or sticky eyes", "കണ്ണിന് ചുവപ്പ് / പഴുപ്പ്"),
+    ("diarrhoea", "Diarrhoea (the diarrhoea form asks more)", "വയറിളക്കം (വയറിളക്ക ഫോമിൽ കൂടുതൽ ചോദ്യങ്ങൾ)"),
+    ("resp", "Cough, cold or breathing problem", "ചുമ / ജലദോഷം / ശ്വാസതടസ്സം"), ("heat", "Heat illness", "ചൂട് മൂലമുള്ള അസുഖം"),
+    ("injury", "Injury or fall", "പരിക്ക് / വീഴ്ച"), ("chronic", "BP, sugar or other long-term illness", "ബി.പി., പ്രമേഹം, മറ്റ് ദീർഘകാല രോഗം"),
+    ("mental", "Mood or memory", "മാനസികാവസ്ഥ / ഓർമ്മ"), ("other", "Other", "മറ്റുള്ളവ")]
+
+
+def form_report_health():
+    s = report_start("Report a health issue", "ആരോഗ്യ പ്രശ്നം റിപ്പോർട്ട് ചെയ്യുക") + report_person()
+    s += [
+        q("begin_group", "hi", "The health issue", "ആരോഗ്യ പ്രശ്നം", app="field-list"),
+        q("select_one condition", "condition", "What is the main problem?", "പ്രധാന പ്രശ്നം എന്താണ്?", req="yes"),
+        q("text", "condition_other", "Describe it", "വിവരിക്കുക", hen=VOICE_EN, hml=VOICE_ML, req="yes",
+          rel="${condition}='other'"),
+        q("select_one yes_no", "water_contact", "Contact with flood, canal or drain water in the 2 weeks before?",
+          "അതിനു മുമ്പുള്ള 2 ആഴ്ചയിൽ വെള്ളപ്പൊക്ക / കനാൽ / ഓട വെള്ളവുമായി സമ്പർക്കം ഉണ്ടായോ?", req="yes",
+          app="horizontal-compact"),
+        q("end_group", "hi"),
+        q("note", "refer_now", "Refer today: jaundice, suspected leptospirosis and heat illness need a doctor quickly.",
+          "ഇന്നുതന്നെ റഫർ ചെയ്യുക: മഞ്ഞപ്പിത്തം, എലിപ്പനി സംശയം, ചൂട് മൂലമുള്ള അസുഖം എന്നിവയ്ക്ക് വേഗം ഡോക്ടറെ കാണണം.",
+          rel="${condition}='jaundice' or ${condition}='lepto' or ${condition}='heat'"),
+        q("calculate", "danger", calc="if(${condition}='jaundice' or ${condition}='lepto' or ${condition}='heat', 'yes', 'no')"),
+    ]
+    s += report_impact()
+    ch = report_choices()
+    ch += [c("condition", n, en, ml) for n, en, ml in HEALTH_CONDITIONS]
+    return s, ch, _settings("obs_report_health", "Report: health issue",
+                            "concat(${hh_id}, ' · ', ${condition}, ' · ', ${today})"), PERSON_ENTITY
+
+
+def form_report_onehealth():
+    s = [
+        q("start", "start"), q("end", "end"), q("today", "today"), q("deviceid", "deviceid"),
+        q("note", "intro", "Report a One Health event: something about animals, water or the surroundings that could "
+          "affect health. Do not photograph people. (Malayalam text is a machine-assisted translation for "
+          "accessibility; English is the reference.)",
+          "വൺ ഹെൽത്ത് സംഭവം റിപ്പോർട്ട് ചെയ്യുക: ആരോഗ്യത്തെ ബാധിക്കാവുന്ന മൃഗങ്ങൾ, വെള്ളം, ചുറ്റുപാട് എന്നിവ സംബന്ധിച്ച കാര്യങ്ങൾ. "
+          "ആളുകളുടെ ഫോട്ടോ എടുക്കരുത്. (മലയാളം യന്ത്രസഹായത്തോടെയുള്ള വിവർത്തനമാണ്; ഇംഗ്ലീഷ് പാഠമാണ് ആധികാരികം.)"),
+        q("select_one report_role", "role", "You are reporting as", "നിങ്ങൾ റിപ്പോർട്ട് ചെയ്യുന്നത്", req="yes",
+          default="${last-saved#role}"),
+        q("select_one where", "where", "Where is it?", "എവിടെയാണ്?", req="yes", app="horizontal-compact"),
+    ]
+    s += hh_scan_block(rel="${where}='household'")
+    s += [
+        q("select_one_from_file sites.csv", "site_pick", "Site", "സ്ഥലം", req="yes", rel="${where}='place'",
+          default="${last-saved#site_pick}"),
+        q("calculate", "camp_site", calc="if(${where}='household', substring-before(${hh_id}, '-'), ${site_pick})"),
+        q("begin_group", "ev", "What did you see?", "എന്താണ് കണ്ടത്?", app="field-list"),
+        q("select_multiple event", "event", "What happened?", "എന്താണ് സംഭവിച്ചത്?", req="yes"),
+        q("select_multiple species", "species", "Which animals or birds?", "ഏത് മൃഗങ്ങൾ / പക്ഷികൾ?", req="yes",
+          rel="selected(${event}, 'animal_sick') or selected(${event}, 'animal_died')"),
+        q("integer", "n_animals", "About how many?", "ഏകദേശം എത്ര?", con=". >= 1 and . <= 100000",
+          rel="selected(${event}, 'animal_sick') or selected(${event}, 'animal_died') or selected(${event}, 'fish_kill')"),
+        q("select_one ynd", "people_ill", "Are people nearby also ill?", "സമീപത്തുള്ള ആളുകൾക്കും അസുഖമുണ്ടോ?", req="yes",
+          app="horizontal-compact"),
+        q("date", "first_seen", "When was it first noticed?", "ആദ്യം ശ്രദ്ധിച്ചത് എപ്പോൾ?", req="yes", con=". <= today()"),
+        q("end_group", "ev"),
+        q("text", "description", "Describe what you saw", "കണ്ടത് വിവരിക്കുക", hen=VOICE_EN, hml=VOICE_ML, app="multiline"),
+        q("image", "photo", "Photo (no people in it)", "ഫോട്ടോ (ആളുകൾ ഇല്ലാതെ)", params="max-pixels=1024"),
+        q("geopoint", "gps", "Location", "സ്ഥാനം"),
+    ]
+    ch = common_choices()
+    ch += [c("report_role", n, en, ml) for n, en, ml in REPORT_ROLES]
+    ch += [c("where", "household", "A household", "ഒരു വീട്"), c("where", "place", "Another place", "മറ്റൊരു സ്ഥലം")]
+    ch += [c("event", n, en, ml) for n, en, ml in [
+        ("animal_sick", "Animals or birds sick", "മൃഗങ്ങൾ / പക്ഷികൾ രോഗബാധിതർ"),
+        ("animal_died", "Animals or birds died suddenly", "മൃഗങ്ങൾ / പക്ഷികൾ പെട്ടെന്ന് ചത്തു"),
+        ("fish_kill", "Dead fish in a canal, pond or the sea", "കനാലിൽ / കുളത്തിൽ / കടലിൽ ചത്ത മീനുകൾ"),
+        ("rats", "Many rats", "ധാരാളം എലികൾ"), ("mosquito", "Mosquito breeding or stagnant water", "കൊതുക് വളരുന്ന കെട്ടിക്കിടക്കുന്ന വെള്ളം"),
+        ("flood", "Water entered houses", "വീടുകളിൽ വെള്ളം കയറി"),
+        ("water_change", "Well or tap water changed colour, smell or taste", "കിണർ / പൈപ്പ് വെള്ളത്തിന്റെ നിറം, മണം, രുചി മാറി"),
+        ("sewage", "Sewage overflow or leaking septic tank", "മലിനജലം കവിഞ്ഞൊഴുകുന്നു / സെപ്റ്റിക് ടാങ്ക് ചോരുന്നു"),
+        ("garbage", "Garbage dumped near water", "വെള്ളത്തിനടുത്ത് മാലിന്യം തള്ളിയിരിക്കുന്നു"), ("other", "Other", "മറ്റുള്ളവ")]]
+    ch += [c("species", n, en, ml) for n, en, ml in [
+        ("dog", "Dogs", "നായ്ക്കൾ"), ("cat", "Cats", "പൂച്ചകൾ"), ("cattle", "Cattle", "കന്നുകാലികൾ"), ("goat", "Goats", "ആടുകൾ"),
+        ("poultry", "Hens", "കോഴികൾ"), ("duck", "Ducks", "താറാവുകൾ"), ("crow", "Crows or wild birds", "കാക്ക / മറ്റ് പക്ഷികൾ"),
+        ("other", "Other", "മറ്റുള്ളവ")]]
+    return s, ch, _settings("obs_report_onehealth", "Report: One Health event",
+                            "concat(${camp_site}, ' · ', ${today})")
+
+
 FORMS = {
     "obs_camp_registration": form_registration,
     "obs_camp_station": form_station,
     "obs_household_visit": form_home_visit,
     "obs_water_sample": form_water_sample,
+    "obs_report_diarrhoea": form_report_diarrhoea,
+    "obs_report_health": form_report_health,
+    "obs_report_onehealth": form_report_onehealth,
 }
 
 if __name__ == "__main__":
@@ -805,4 +1077,8 @@ if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for form_id, fn in FORMS.items():
         write(os.path.join(OUT, f"{form_id}.xlsx"), *fn())
+    # A starting point for admins who want a new report form: a copy of the health-issue form.
+    s, ch, st, ent = form_report_health()
+    st = dict(st, form_id="obs_report_template", form_title="Report: [your title]")
+    write(os.path.join(OUT, "report_form_template.xlsx"), s, ch, st, ent)
     print("written", len(FORMS))

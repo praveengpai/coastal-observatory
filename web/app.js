@@ -5,16 +5,18 @@
   const S = {
     token: null, user: null, tab: null, layer: "combined", site: null, includeTest: false,
     scen: { rain_mm: 80, tide_m: 1.1, temp_c: 32, rh: 78 }, dataset: "samples", siteType: "",
-    query: null, done: {}, cache: {}, rid: 0,
+    query: null, done: {}, cache: {}, rid: 0, rform: "", rdays: 90, wyear: "",
   };
   const TABS = { master: "Master dashboard", asha: "ASHA / field", ward: "Ward member",
-    science: "Scientist", advisories: "Advisories", admin: "Admin" };
+    science: "Scientist", reports: "Household reports", advisories: "Advisories", admin: "Admin" };
   const ROLE_TABS = {
-    admin: ["master", "asha", "ward", "science", "advisories", "admin"],
-    coordinator: ["master", "asha", "ward", "science", "advisories", "admin"],
-    scientist: ["master", "science"], doctor: ["master", "advisories", "asha"],
-    asha: ["asha", "advisories"], ward: ["ward"],
+    admin: ["master", "asha", "ward", "science", "reports", "advisories", "admin"],
+    coordinator: ["master", "asha", "ward", "science", "reports", "advisories", "admin"],
+    scientist: ["master", "science", "reports"], doctor: ["master", "reports", "advisories", "asha"],
+    asha: ["asha", "reports", "advisories"], ward: ["ward", "reports"],
   };
+  const ROLE_NAMES = { admin: "Admin", coordinator: "Coordinator", scientist: "Scientist", doctor: "Doctor",
+    asha: "ASHA", ward: "Ward member" };
   const ANALYSTS = ["admin", "coordinator", "scientist", "doctor"];
   const LAYERS = [["combined", "Combined"], ["water", "Water"], ["illness", "Illness"], ["salinity", "Salinity"],
     ["heat", "Heat"], ["vulnerability", "Elder vulnerability"]];
@@ -112,7 +114,7 @@
     view().innerHTML = `<p class="mut">Loading…</p>`;
     try {
       await ({ master: renderMaster, asha: renderAsha, ward: renderWard, science: renderScience,
-        advisories: renderAdvisories, admin: renderAdmin })[S.tab](rid);
+        reports: renderReports, advisories: renderAdvisories, admin: renderAdmin })[S.tab](rid);
     } catch (err) {
       if (err.message !== "Signed out") view().innerHTML = `<p class="error">${esc(err.message)}</p>`;
     }
@@ -342,7 +344,8 @@
   // ---------------------------------------------------------------- ASHA view
   async function renderAsha(rid) {
     const tasks = await get("/api/tasks");
-    const groups = { referral: "Referral follow-ups", advice: "Give water results and advice", resample: "Repeat water samples", elder: "Elder checks before tide or heat" };
+    const groups = { report: "Illness reported this week", referral: "Referral follow-ups", advice: "Give water results and advice",
+      resample: "Repeat water samples", elder: "Elder checks before tide or heat" };
     const done = tasks.filter((t, i) => S.done[taskKey(t, i)]).length;
     if (rid !== S.rid) return;
     view().innerHTML = `
@@ -463,21 +466,85 @@
     });
   }
 
+  // ---------------------------------------------------------------- household reports
+  const fmtDT = (v) => (v ? new Date(v + (v.endsWith("Z") || v.includes("+") ? "" : "Z")).toLocaleString("en-IN",
+    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "never");
+
+  function workdaysCard(wd) {
+    const years = [new Date().getFullYear(), new Date().getFullYear() - 1];
+    const big = (label, v) => `<div class="out"><span class="mut small">${esc(label)}</span><span class="num">${esc(v)}</span></div>`;
+    return `<section class="card warm" aria-label="Workdays lost">
+      <div class="form-row" style="justify-content:space-between"><div><p class="lbl">Productivity loss</p>
+        <h2 style="font-size:22px">Days lost to water-related illness</h2></div>
+        <label>Period<select data-act="wyear"><option value="">Past 12 months</option>${years.map((y) => `<option value="${y}" ${String(y) === String(S.wyear) ? "selected" : ""}>${y}</option>`).join("")}</select></label></div>
+      <div class="outs">${big("Productive days lost", wd.productive_days)}${big("Workdays (the ill person)", wd.work_days)}
+        ${big("Days family stayed home to care", wd.carer_days)}${big("School days missed", wd.school_days)}
+        ${big("Episodes reported", wd.episodes)}${wd.value_rs != null ? big(`Value at ₹${wd.daily_wage_rs} a day`, "₹" + Number(wd.value_rs).toLocaleString("en-IN"))
+          : `<div class="out"><span class="mut small">Value in rupees</span><span class="small">Shown once an admin sets a daily wage on the Admin tab.</span></div>`}</div>
+      <div class="row">
+        <div class="grow"><table><tr><th>Type of illness</th><th>Episodes</th><th>Workdays</th><th>Carer days</th><th>School days</th><th>Admitted</th></tr>
+          ${wd.by_class.map((c) => `<tr><td>${esc(c.label)}</td><td class="n">${c.episodes}</td><td class="n">${c.work_days}</td><td class="n">${c.carer_days}</td><td class="n">${c.school_days}</td><td class="n">${c.admitted}</td></tr>`).join("") || `<tr><td colspan="6">No water-related illness reported in this period.</td></tr>`}</table></div>
+        <div class="side"><table><tr><th>Site</th><th>Episodes</th><th>Productive days</th></tr>
+          ${wd.by_site.map((x) => `<tr><td>${esc(x.site)}</td><td class="n">${x.episodes}</td><td class="n">${x.work_days + x.carer_days}</td></tr>`).join("") || `<tr><td colspan="3">None yet.</td></tr>`}</table></div>
+      </div>
+      <p class="mut">${wd.per_1000_people != null ? `${wd.per_1000_people} productive days lost per 1,000 registered people. ` : ""}${esc(wd.note)}</p>
+    </section>`;
+  }
+
+  async function renderReports(rid) {
+    const q = `/api/reports?days=${S.rdays}` + (S.rform ? `&form_id=${encodeURIComponent(S.rform)}` : "");
+    const showWd = can(...ANALYSTS, "ward");
+    const [rep, wd] = await Promise.all([get(q), showWd ? get("/api/stats/workdays" + (S.wyear ? `?year=${S.wyear}` : "")) : null]);
+    if (rid !== S.rid) return;
+    const rows = rep.rows;
+    const who = (r) => r.name ? esc(r.name) : r.person_id ? esc(r.person_id) : `<span class="mut">${r.hh_id === null ? "–" : "Name not shared"}</span>`;
+    view().innerHTML = `
+    ${wd ? workdaysCard(wd) : ""}
+    <section class="card" aria-label="Reports"><p class="lbl">Household reports</p>
+      <div class="form-row" style="justify-content:space-between"><h2 style="font-size:22px">Reported from households</h2>
+        <div class="form-row">
+          <label>Form<select data-act="rform"><option value="">All forms you can see</option>${rep.forms.map((f) => `<option value="${esc(f.form_id)}" ${f.form_id === S.rform ? "selected" : ""}>${esc(f.title)}</option>`).join("")}</select></label>
+          <label>Period<select data-act="rdays">${[[7, "Past week"], [30, "Past month"], [90, "Past 3 months"], [365, "Past year"]].map(([v, l]) => `<option value="${v}" ${v === S.rdays ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        </div></div>
+      <p class="mut">Reported by ASHAs, volunteers and ward members after scanning the house sticker. ${S.user.role === "ward" ? "Names and household numbers are held by the health team." : can("scientist") ? "No names are shown in this view." : "Names appear only where the family agreed."}</p>
+      ${rows.length ? `<div class="scroll" style="max-height:560px;overflow:auto"><table><tr><th>Date</th><th>Form</th><th>Site</th>${S.user.role === "ward" ? "" : "<th>Household</th><th>Person</th>"}<th>Age, sex</th><th>What</th><th>Water-related</th><th>Days ill</th><th>Workdays</th><th>Carer days</th><th>School days</th><th>Treatment</th><th>Reported by</th></tr>
+        ${rows.map((r) => `<tr><td style="white-space:nowrap">${esc(r.date)}</td><td>${esc(r.form.replace("Report: ", ""))}</td><td>${esc(r.site)}</td>
+          ${S.user.role === "ward" ? "" : `<td>${esc(r.hh_id || "–")}</td><td>${who(r)}</td>`}
+          <td>${r.age == null ? "–" : esc(r.age)}${r.sex ? ", " + esc(r.sex) : ""}</td>
+          <td>${r.danger ? '<b class="error">Danger signs</b> ' : ""}${esc(r.condition || (r.events || "").replace(/_/g, " ") || "–")}</td>
+          <td>${esc(r.water_related || "–")}</td><td class="n">${r.days_ill == null ? "–" : r.days_ill}</td><td class="n">${r.work_days}</td>
+          <td class="n">${r.carer_days}</td><td class="n">${r.school_days}</td><td>${esc(r.care || "–")}</td><td>${esc(r.reported_by || "–")}</td></tr>`).join("")}</table></div>`
+        : `<p class="empty">No reports in this period.</p>`}
+    </section>`;
+  }
+
   // ---------------------------------------------------------------- admin
   async function renderAdmin(rid) {
     const admin = can("admin");
-    const audit = admin ? await get("/api/admin/audit?limit=50") : [];
-    const summary = await get("/api/summary");
+    const [audit, summary, srcs, rforms, wd] = await Promise.all([
+      admin ? get("/api/admin/audit?limit=50") : [], get("/api/summary"), get("/api/admin/sources"),
+      admin ? get("/api/admin/report-forms") : [], admin ? get("/api/stats/workdays") : null]);
     if (rid !== S.rid) return;
+    const roleBoxes = (name, chosen) => Object.entries(ROLE_NAMES).map(([r, l]) => `<label class="check"><input type="checkbox" name="${name}" value="${r}" ${chosen.includes(r) ? "checked" : ""} ${r === "admin" ? "checked disabled" : ""}> ${l}</label>`).join("");
     view().innerHTML = `
     <div id="flash" class="mut" role="status" style="font-weight:600"></div>
+    <section class="card" aria-label="Data sources"><p class="lbl">Data sources</p><h2>Where the data comes from</h2>
+      <div class="scroll"><table><tr><th>Source</th><th>Brings in</th><th>Key</th><th>Last updated</th><th>Status</th><th></th></tr>
+      ${srcs.map((x) => {
+        const failing = x.last_error && (!x.last_ok || x.last_attempt > x.last_ok);
+        const key = x.needs_key ? (x.key_present ? "Present" : "Missing") : "Not needed";
+        return `<tr><td><b>${esc(x.name)}</b><br><span class="mut small">${esc(x.schedule)}</span></td><td>${esc(x.what)}</td>
+          <td><span class="status ${x.needs_key ? (x.key_present ? "lv-low" : "lv-watch") : ""}" style="padding:2px 6px;border-radius:4px">${key}</span></td>
+          <td>${x.last_ok ? esc(fmtDT(x.last_ok)) : "never"}<br><span class="mut small">${esc(x.coverage || "")}</span></td>
+          <td>${failing ? `<span class="error">${esc(x.last_error)}</span>` : x.last_ok ? esc(x.detail || "OK") : `<span class="mut">${x.needs_key && !x.key_present ? "Waiting for a key" : "Not run yet"}</span>`}</td>
+          <td>${x.fetch ? `<button type="button" class="btn small" data-act="src-fetch" data-id="${esc(x.key)}">Fetch now</button>` : ""}</td></tr>`;
+      }).join("")}</table></div>
+      <p class="mut">Keys are kept in the server's settings file, never on this page. This page shows only whether each key is there.</p></section>
     <div class="row">
       <section class="card third"><p class="lbl">Data</p><h2>Run jobs</h2>
-        <div class="chips"><button type="button" class="btn" data-act="job" data-path="/api/sync">Sync from ODK Central</button>
-        <button type="button" class="btn" data-act="job" data-path="/api/weather/fetch">Fetch weather forecast</button>
-        <button type="button" class="btn" data-act="job" data-path="/api/rules/run">Generate advisories and decisions</button></div>
-        <table><tr><th>Form</th><th>Last sync</th><th>Total</th></tr>${summary.sync.map((s) => `<tr><td>${esc(s.form)}</td><td>${esc(s.last_run || "never")}</td><td class="n">${esc(s.total)}</td></tr>`).join("") || `<tr><td colspan="3">Not synced yet.</td></tr>`}</table>
-        <p class="mut">On the server these also run on a schedule (see deploy/crontab).</p></section>
+        <div class="chips"><button type="button" class="btn" data-act="job" data-path="/api/rules/run">Generate advisories and decisions</button></div>
+        <table><tr><th>Form</th><th>Last sync</th><th>Total</th></tr>${summary.sync.map((s) => `<tr><td>${esc(s.form)}</td><td>${esc(s.last_run ? fmtDT(s.last_run) : "never")}</td><td class="n">${esc(s.total)}</td></tr>`).join("") || `<tr><td colspan="3">Not synced yet.</td></tr>`}</table>
+        <p class="mut">Sync and weather also run on their own schedule.</p></section>
       ${admin ? `<section class="card third"><p class="lbl">Sites</p><h2>Upload sites.csv</h2>
         <p class="mut">The same file attached to the ODK forms: name, label, site_type, lat, lon. Run tools/publish_sites.py to update the forms on ODK Central.</p>
         <input type="file" accept=".csv" data-act="upload" data-path="/api/import/sites"></section>
@@ -485,11 +552,29 @@
         <form id="user-form" class="form-row" style="flex-direction:column;align-items:stretch">
           <label>Username<input name="username" required pattern="[a-z0-9._-]{3,60}"></label>
           <label>Full name<input name="full_name" required></label>
-          <label>Role<select name="role">${["admin", "coordinator", "scientist", "doctor", "asha", "ward"].map((r) => `<option>${r}</option>`).join("")}</select></label>
+          <label>Role<select name="role">${Object.keys(ROLE_NAMES).map((r) => `<option>${r}</option>`).join("")}</select></label>
           <label>Sites (codes separated by spaces, or *)<input name="sites" value="*"></label>
           <label>Temporary password (10+ characters)<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
           <button class="btn primary" type="submit">Save user</button></form></section>` : ""}
     </div>
+    ${admin ? `<section class="card" aria-label="Report forms"><p class="lbl">Household report forms</p><h2>Who sees each report form</h2>
+      <p class="mut">Ticked roles see that form's reports on the Household reports tab. Names still appear only for roles that care for people (ASHA, doctor, coordinator, admin); ward members never see names.</p>
+      <div class="scroll"><table><tr><th>Form</th><th>Who can see the reports</th><th>Phones that can fill it</th><th>Reports</th><th>On</th><th></th></tr>
+      ${rforms.map((f) => `<tr data-rf="${esc(f.form_id)}"><td><input name="title" value="${esc(f.title)}" style="min-width:220px"><br><span class="mut small">${esc(f.form_id)}</span></td>
+        <td><div class="chips">${roleBoxes("roles", f.visible_roles)}</div></td><td class="small">${esc(f.phone_groups || "–")}</td>
+        <td class="n">${f.reports}</td><td><input type="checkbox" name="active" ${f.active ? "checked" : ""} aria-label="Form in use"></td>
+        <td><button type="button" class="btn small" data-act="rf-save" data-id="${esc(f.form_id)}">Save</button></td></tr>`).join("")}</table></div>
+      <form id="rf-upload" class="card" style="background:#F4F7F7">
+        <h2>Add a new report form, or update one</h2>
+        <p class="mut">1. <button type="button" class="btn small" data-act="rf-template">Download the template</button> and edit it in Excel: change the title, the form_id (must start with obs_report_) and the questions in the middle. Keep the household, person and "effect on daily life" questions so workdays lost keep adding up.<br>
+          2. Choose who sees its reports and which phones can fill it, then publish. The phones get it the next time they refresh their forms.</p>
+        <label>Form file (.xlsx)<input type="file" name="file" accept=".xlsx" required></label>
+        <p class="mut small" style="margin-top:6px">Who sees the reports</p><div class="chips">${roleBoxes("roles", ["coordinator", "doctor", "asha"])}</div>
+        <p class="mut small" style="margin-top:6px">Phones that can fill it</p><div id="pg-box" class="chips"><button type="button" class="btn small" data-act="pg-load">Show phone accounts</button></div>
+        <button class="btn primary" type="submit">Publish to the phones</button></form>
+      <form id="wage-form" class="form-row"><label>Daily wage used to value lost workdays (₹)<input name="wage" type="number" min="0" step="1" value="${wd && wd.daily_wage_rs != null ? esc(wd.daily_wage_rs) : ""}" placeholder="e.g. a local daily wage"></label>
+        <button class="btn" type="submit">Save</button><span class="mut small">Leave empty to show days only.</span></form>
+    </section>` : ""}
     ${admin ? `<section class="card"><p class="lbl">Audit log</p><h2>Last 50 requests</h2><div class="scroll"><table><tr><th>Time (UTC)</th><th>User</th><th>Request</th><th>Status</th><th>IP</th></tr>
       ${audit.map((a) => `<tr><td>${esc(a.at)}</td><td>${esc(a.user || "–")}</td><td>${esc(a.method + " " + a.path)}</td><td class="n">${esc(a.status)}</td><td>${esc(a.ip)}</td></tr>`).join("")}</table></div></section>` : ""}`;
     const f = $("#user-form");
@@ -497,6 +582,26 @@
       e.preventDefault();
       const data = Object.fromEntries(new FormData(f).entries());
       try { await api("/api/admin/users", { method: "POST", json: data }); alertMsg(`Saved user ${data.username}.`); f.reset(); }
+      catch (err) { alertMsg(err.message); }
+    });
+    const up = $("#rf-upload");
+    if (up) up.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData();
+      fd.append("file", up.querySelector('input[name="file"]').files[0]);
+      const roles = [...up.querySelectorAll('input[name="roles"]:checked')].map((x) => x.value).join(" ");
+      const users = [...up.querySelectorAll('input[name="pg"]:checked')].map((x) => x.value).join(" ");
+      alertMsg("Publishing…");
+      try {
+        const r = await api(`/api/admin/report-forms?visible_roles=${encodeURIComponent(roles)}&app_users=${encodeURIComponent(users)}`, { method: "POST", body: fd });
+        alertMsg(`Published ${r.title}.`); render();
+      } catch (err) { alertMsg(err.message); }
+    });
+    const wf = $("#wage-form");
+    if (wf) wf.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const v = wf.querySelector('input[name="wage"]').value;
+      try { await api("/api/admin/settings/wage", { method: "POST", json: { daily_wage_rs: v === "" ? null : Number(v) } }); alertMsg("Daily wage saved."); }
       catch (err) { alertMsg(err.message); }
     });
   }
@@ -517,6 +622,24 @@
       else if (act === "decide") { await api(`/api/decisions/${id}`, { method: "POST", json: { status: b.dataset.status } }); render(); }
       else if (act === "adv") { await api(`/api/advisories/${id}`, { method: "POST", json: { status: b.dataset.status } }); render(); }
       else if (act === "sendlist") { await download("/api/advisories/send-list.csv", "send-list.csv"); }
+      else if (act === "rf-template") { await download("/api/admin/report-form-template", "report_form_template.xlsx"); }
+      else if (act === "src-fetch") {
+        b.disabled = true; alertMsg("Fetching…");
+        const r = await api(`/api/admin/sources/${encodeURIComponent(id)}/fetch`, { method: "POST" });
+        await render(); alertMsg((r.ok ? "Done: " : "Not fetched: ") + r.result);
+      }
+      else if (act === "rf-save") {
+        const row = document.querySelector(`tr[data-rf="${CSS.escape(id)}"]`);
+        const body = { title: row.querySelector('input[name="title"]').value,
+          visible_roles: [...row.querySelectorAll('input[name="roles"]:checked')].map((x) => x.value),
+          active: row.querySelector('input[name="active"]').checked };
+        await api(`/api/admin/report-forms/${encodeURIComponent(id)}`, { method: "POST", json: body });
+        alertMsg("Saved.");
+      }
+      else if (act === "pg-load") {
+        const users = await api("/api/admin/phone-groups");
+        $("#pg-box").innerHTML = users.map((u) => `<label class="check"><input type="checkbox" name="pg" value="${u.id}"> ${esc(u.name)}</label>`).join("") || "No phone accounts found.";
+      }
       else if (act === "export") { await download(`/api/export/${S.dataset}.csv`, `observatory-${S.dataset}.csv`); }
       else if (act === "job") {
         b.disabled = true; alertMsg("Working…");
@@ -530,6 +653,9 @@
     if (t.dataset.act === "task") { S.done[t.dataset.id] = t.checked; }
     else if (t.dataset.act === "dataset") { S.dataset = t.value; render(); }
     else if (t.dataset.act === "sitetype") { S.siteType = t.value; render(); }
+    else if (t.dataset.act === "rform") { S.rform = t.value; render(); }
+    else if (t.dataset.act === "rdays") { S.rdays = Number(t.value); render(); }
+    else if (t.dataset.act === "wyear") { S.wyear = t.value; render(); }
     else if (t.dataset.act === "upload" && t.files.length) {
       const fd = new FormData();
       fd.append("file", t.files[0]);

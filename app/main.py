@@ -11,10 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from . import analytics, config, rules, sync_odk, translate, weather
+from . import analytics, config, reports, rules, sources, sync_odk, translate, weather
 from .db import SessionLocal, get_db, init_db
 from .models import (Advisory, AuditLog, Decision, HomeVisit, Household, HouseholdSurvey, LabResult, Person,
-                     PersonPII, Registration, Site, StationRecord, SyncState, User, WaterSample)
+                     PersonPII, Registration, Report, ReportForm, Site, StationRecord, SyncState, User, WaterSample)
 from .security import ROLES, Principal, authenticate, current_user, hash_password, make_token, require
 
 ALL = ROLES
@@ -24,6 +24,11 @@ MANAGERS = ("admin", "coordinator")
 @asynccontextmanager
 async def lifespan(_app):
     init_db()
+    db = SessionLocal()
+    try:
+        reports.ensure_defaults(db)
+    finally:
+        db.close()
     yield
 
 
@@ -115,6 +120,8 @@ def summary(include_test: bool = False, days: int = 7, p: Principal = Depends(cu
                 StationRecord.site_code.in_(codes), StationRecord.collected_on >= since).count(), "what": "screenings"},
             {"source": "Household visits", "value": db.query(HomeVisit).filter(
                 HomeVisit.site_code.in_(codes), HomeVisit.visit_on >= since).count(), "what": "by ASHAs and volunteers"},
+            {"source": "Household reports", "value": db.query(Report).filter(
+                Report.site_code.in_(codes), Report.reported_on >= since).count(), "what": "illness and One Health"},
             {"source": "Advisories", "value": db.query(Advisory).filter(
                 Advisory.site_code.in_(codes), Advisory.status == "sent").count(), "what": "sent to households"},
         ],
@@ -399,7 +406,9 @@ async def import_lab(file: UploadFile = File(...), p: Principal = Depends(requir
 @app.post("/api/import/tides")
 async def import_tides(file: UploadFile = File(...), p: Principal = Depends(require(*MANAGERS, "scientist")),
                        db: Session = Depends(get_db)):
-    return {"imported": weather.import_tides(db, await _read_csv(file))}
+    n = weather.import_tides(db, await _read_csv(file))
+    sources.record(db, "tides", True, detail=f"{n} days uploaded")
+    return {"imported": n}
 
 
 @app.post("/api/import/sites")
@@ -419,17 +428,148 @@ async def import_sites(file: UploadFile = File(...), p: Principal = Depends(requ
 
 @app.post("/api/sync")
 def sync(p: Principal = Depends(require(*MANAGERS)), db: Session = Depends(get_db)):
-    if config.FORM_SERVER == "kobo":
-        from . import sync_kobo
-        return sync_kobo.run_sync(db)
-    if not config.ODK_URL:
+    if config.FORM_SERVER == "odk" and not config.ODK_URL:
         raise HTTPException(503, "ODK Central is not configured (OBS_ODK_URL).")
-    return sync_odk.run_sync(db)
+    try:
+        return {"result": sources.fetch(db, "odk")}
+    except Exception as exc:
+        raise HTTPException(502, f"Sync failed: {exc}")
 
 
 @app.post("/api/weather/fetch")
 def fetch_weather(p: Principal = Depends(require(*MANAGERS)), db: Session = Depends(get_db)):
-    return {"days": weather.fetch_forecast(db)}
+    try:
+        return {"result": sources.fetch(db, "open_meteo")}
+    except Exception as exc:
+        raise HTTPException(502, f"Weather fetch failed: {exc}")
+
+
+# ------------------------------------------------------------------ data sources
+
+@app.get("/api/admin/sources")
+def data_sources(p: Principal = Depends(require(*MANAGERS)), db: Session = Depends(get_db)):
+    return sources.status(db)
+
+
+@app.post("/api/admin/sources/{key}/fetch")
+def fetch_source(key: str, p: Principal = Depends(require(*MANAGERS)), db: Session = Depends(get_db)):
+    if key not in {s["key"] for s in sources.SOURCES if s["fetch"]}:
+        raise HTTPException(404, "This source cannot be fetched from here.")
+    try:
+        return {"ok": True, "result": sources.fetch(db, key)}
+    except Exception as exc:
+        return {"ok": False, "result": str(exc)}
+
+
+# ------------------------------------------------------------------ household reports
+
+@app.get("/api/reports")
+def list_reports(include_test: bool = False, form_id: str | None = None, days: int = Query(90, ge=1, le=730),
+                 p: Principal = Depends(current_user), db: Session = Depends(get_db)):
+    return {"forms": [{"form_id": f.form_id, "title": f.title} for f in reports.visible_forms(db, p.role)],
+            "rows": reports.list_reports(db, p, sites_for(db, p, include_test), form_id, days)}
+
+
+@app.get("/api/stats/workdays")
+def stats_workdays(include_test: bool = False, year: int | None = Query(None, ge=2020, le=2100),
+                   p: Principal = Depends(require(*ANALYSTS, "ward")), db: Session = Depends(get_db)):
+    return reports.workdays(db, sites_for(db, p, include_test), year,
+                            daily_wage=reports.get_setting(db, "daily_wage_rs"))
+
+
+class WageBody(BaseModel):
+    daily_wage_rs: float | None = Field(default=None, ge=0, le=100000)
+
+
+@app.post("/api/admin/settings/wage")
+def set_wage(body: WageBody, p: Principal = Depends(require("admin")), db: Session = Depends(get_db)):
+    reports.set_setting(db, "daily_wage_rs", body.daily_wage_rs)
+    return {"ok": True}
+
+
+@app.get("/api/admin/report-forms")
+def report_forms(p: Principal = Depends(require("admin")), db: Session = Depends(get_db)):
+    return [{"form_id": f.form_id, "title": f.title, "visible_roles": f.visible_roles.split(),
+             "phone_groups": f.phone_groups, "active": f.active,
+             "reports": db.query(Report).filter(Report.form_id == f.form_id).count()}
+            for f in db.query(ReportForm).order_by(ReportForm.form_id)]
+
+
+class ReportFormBody(BaseModel):
+    title: str = Field(min_length=3, max_length=120)
+    visible_roles: list[str]
+    active: bool = True
+
+
+@app.post("/api/admin/report-forms/{form_id}")
+def update_report_form(form_id: str, body: ReportFormBody, p: Principal = Depends(require("admin")),
+                       db: Session = Depends(get_db)):
+    f = db.get(ReportForm, form_id)
+    if not f:
+        raise HTTPException(404, "Unknown report form.")
+    bad = [r for r in body.visible_roles if r not in ROLES]
+    if bad:
+        raise HTTPException(422, f"Unknown role: {', '.join(bad)}")
+    f.title, f.visible_roles, f.active = body.title.strip(), " ".join(sorted(set(body.visible_roles) | {"admin"})), body.active
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/report-form-template")
+def report_form_template(p: Principal = Depends(require("admin"))):
+    path = Path(__file__).resolve().parent.parent / "forms" / "dist" / "report_form_template.xlsx"
+    return FileResponse(path, filename="report_form_template.xlsx",
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/admin/phone-groups")
+def phone_groups(p: Principal = Depends(require("admin"))):
+    if config.FORM_SERVER != "odk" or not config.ODK_URL:
+        raise HTTPException(503, "ODK Central is not configured on the server.")
+    try:
+        return sync_odk.Central().app_users()
+    except Exception as exc:
+        raise HTTPException(502, f"Could not reach ODK Central: {exc}")
+
+
+@app.post("/api/admin/report-forms")
+async def upload_report_form(file: UploadFile = File(...), visible_roles: str = "admin coordinator doctor asha",
+                             app_users: str = "", p: Principal = Depends(require("admin")),
+                             db: Session = Depends(get_db)):
+    """Publish a new or changed report form (an XLSForm) to ODK Central and register who may see its reports."""
+    from openpyxl import load_workbook
+    raw = await file.read()
+    if len(raw) > 5_000_000:
+        raise HTTPException(413, "File too large (5 MB maximum).")
+    try:
+        wb = load_workbook(io.BytesIO(raw), read_only=True)
+        rows = list(wb["settings"].iter_rows(values_only=True))
+        settings = dict(zip(rows[0], rows[1]))
+    except Exception:
+        raise HTTPException(422, "This is not an XLSForm with a settings sheet.")
+    form_id, title = str(settings.get("form_id") or "").strip(), str(settings.get("form_title") or "").strip()
+    if not reports.is_report_form(form_id) or not form_id.replace("_", "").isalnum() or len(form_id) > 60:
+        raise HTTPException(422, "The form_id in the settings sheet must start with obs_report_ and use only "
+                                 "letters, numbers and underscores.")
+    roles = [r for r in visible_roles.split() if r in ROLES]
+    ids = [int(x) for x in app_users.split() if x.isdigit()]
+    if config.FORM_SERVER == "odk" and config.ODK_URL:
+        try:
+            central = sync_odk.Central()
+            central.publish_form(form_id, raw, ids, datetime.now(timezone.utc).strftime("%Y%m%d%H%M"))
+            names = {u["id"]: u["name"] for u in central.app_users()}
+        except Exception as exc:
+            raise HTTPException(502, f"ODK Central: {exc}")
+    else:
+        raise HTTPException(503, "ODK Central is not configured on the server.")
+    f = db.get(ReportForm, form_id) or ReportForm(form_id=form_id)
+    f.title = title or form_id
+    f.visible_roles = " ".join(sorted(set(roles) | {"admin"}))
+    f.phone_groups = ", ".join(names.get(i, str(i)) for i in ids)
+    f.active = True
+    db.merge(f)
+    db.commit()
+    return {"ok": True, "form_id": form_id, "title": f.title}
 
 
 class NewUser(BaseModel):
