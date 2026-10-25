@@ -241,10 +241,10 @@
         <p class="lbl">Modelling</p><h2>What-if scenario</h2>
         <p class="mut">Move the levers to see the model’s estimate for the sites you can see.</p>
         <div class="sliders">
-          <label>Rainfall in 48 h: <span id="v-rain">${S.scen.rain_mm}</span> mm<input type="range" data-scen="rain_mm" min="0" max="200" step="5" value="${S.scen.rain_mm}"></label>
-          <label>High tide: <span id="v-tide">${S.scen.tide_m.toFixed(1)}</span> m<input type="range" data-scen="tide_m" min="0.4" max="1.8" step="0.1" value="${S.scen.tide_m}"></label>
-          <label>Air temperature: <span id="v-temp">${S.scen.temp_c}</span> °C<input type="range" data-scen="temp_c" min="24" max="42" step="1" value="${S.scen.temp_c}"></label>
-          <label>Relative humidity: <span id="v-rh">${S.scen.rh}</span> %<input type="range" data-scen="rh" min="40" max="98" step="1" value="${S.scen.rh}"></label>
+          <label><span>Rainfall in 48 h: <span id="v-rain">${S.scen.rain_mm}</span> mm</span><input type="range" data-scen="rain_mm" min="0" max="200" step="5" value="${S.scen.rain_mm}"></label>
+          <label><span>High tide: <span id="v-tide">${S.scen.tide_m.toFixed(1)}</span> m</span><input type="range" data-scen="tide_m" min="0.4" max="1.8" step="0.1" value="${S.scen.tide_m}"></label>
+          <label><span>Air temperature: <span id="v-temp">${S.scen.temp_c}</span> °C</span><input type="range" data-scen="temp_c" min="24" max="42" step="1" value="${S.scen.temp_c}"></label>
+          <label><span>Relative humidity: <span id="v-rh">${S.scen.rh}</span> %</span><input type="range" data-scen="rh" min="40" max="98" step="1" value="${S.scen.rh}"></label>
         </div>
         <div class="outs" id="scen-out"></div>
         <p class="mut small" id="scen-note"></p>

@@ -468,6 +468,12 @@ def index():
     return FileResponse(WEB / "index.html")
 
 
+@app.get("/install")
+def install_page():
+    """Public page: how to install and set up the field app. Holds no setup codes."""
+    return FileResponse(WEB / "install.html")
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
     return JSONResponse({"detail": "Something went wrong on the server."}, status_code=500)

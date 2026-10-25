@@ -111,6 +111,11 @@ def test_security_headers(client):
     assert r.headers["X-Frame-Options"] == "DENY" and "default-src 'self'" in r.headers["Content-Security-Policy"]
 
 
+def test_install_page_is_public(client):
+    r = client.get("/install")
+    assert r.status_code == 200 and "org.odk.collect.android" in r.text and "QR" in r.text
+
+
 def test_flatten_and_rejected_submissions():
     sub = {"__id": "uuid:1", "__system": {"submissionDate": "2026-11-14T10:00:00Z", "reviewState": "rejected"},
            "camp": {"camp_site": "TST"}, "gps": {"type": "Point", "coordinates": [76.3, 9.98, 0]}}
