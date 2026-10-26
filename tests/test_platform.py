@@ -465,3 +465,54 @@ def test_idsp_exports(client):
     assert "name" in client.get("/api/idsp/linelist.csv", headers=mo).text.splitlines()[0].split(",")
     assert "name" not in client.get("/api/idsp/linelist.csv", headers=dso).text.splitlines()[0].split(",")
     assert client.get("/api/idsp/linelist.csv", headers=login(client, "asha")).status_code == 403
+
+
+def test_idsp_review_regressions(client):
+    """Two clusters in one ward, cross-ward clusters, reopening, duplicates and lab corrections."""
+    from datetime import date, timedelta
+    from app import idsp
+    from app.db import SessionLocal
+    from app.models import Household, IdspAlert, IdspCase
+    db = SessionLocal()
+    today = date.today()
+    made = []
+    for i, (site, lat) in enumerate([("DMC", 10.20), ("DMC", 10.2003), ("DMC", 10.2006),        # cluster 1
+                                     ("DMC", 10.25), ("DMC", 10.2503), ("DMC", 10.2506),        # cluster 2, 5 km away
+                                     ("DF1", 10.2009)]):                                        # next ward, 100 m away
+        hh = f"{site}-8{i:02d}"
+        db.add(Household(hh_id=hh, site_code=site, lat=lat, lon=76.6))
+        made.append(idsp.add_record(db, "idsp", f"idsp:rr-{i}", site=site, hh_id=hh, person_id=None, age=30,
+                                    sex="m", syndrome="lws", reported_on=today - timedelta(days=1)))
+    db.commit()
+    idsp.generate_alerts(db, ["DMC", "DF1"], today)                 # must not crash on two clusters in one ward
+    al = db.query(IdspAlert).filter(IdspAlert.kind == "add_cluster", IdspAlert.site_code == "DMC",
+                                    IdspAlert.rule_key.like(f"%:{made[0].id}")).one()
+    assert "DF1" not in al.reason and len(al.case_ids.split()) == 3
+    assert db.query(IdspAlert).filter(IdspAlert.kind == "add_cluster", IdspAlert.site_code == "DMC").count() >= 2
+    # reopening: a case found not to be one comes back when someone reports it again
+    c = idsp.add_record(db, "community", "community:rr-a", site="DMC", hh_id="DMC-899", person_id=None, age=50,
+                        sex="f", syndrome="jaundice", reported_on=today - timedelta(days=3))
+    idsp.verify(db, c, "not_case", "asha", "asha")
+    c2 = idsp.add_record(db, "community", "community:rr-b", site="DMC", hh_id="DMC-899", person_id=None, age=50,
+                         sex="f", syndrome="jaundice", reported_on=today)
+    assert c2.id == c.id and c2.status == "unverified"
+    # duplicates cannot chain or be re-verified
+    a, b = made[0], made[1]
+    idsp.verify(db, b, "duplicate", "asha", "asha", duplicate_of=a.id)
+    for bad in (lambda: idsp.verify(db, a, "duplicate", "asha", "asha", duplicate_of=b.id),
+                lambda: idsp.verify(db, b, "verified", "asha", "asha")):
+        try:
+            bad()
+            raise AssertionError("should have been refused")
+        except ValueError:
+            pass
+    # a positive lab result sets Form P; correcting it to negative removes that diagnosis again
+    x = made[3]
+    idsp.set_lab(db, x, "cholera_rdt", "positive", "lab")
+    assert x.p_diagnosis == "cholera" and idsp.tier(x) == "L"
+    idsp.set_lab(db, x, "cholera_rdt", "negative", "lab")
+    assert x.p_diagnosis is None and idsp.tier(x) == "S"
+    db.close()
+    h = login(client, "dso")
+    r = client.post("/api/idsp/thresholds", content='{"lepto_n": NaN}', headers={**h, "Content-Type": "application/json"})
+    assert r.status_code == 422

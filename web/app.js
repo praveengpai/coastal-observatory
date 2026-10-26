@@ -640,7 +640,8 @@
       if (can("mo", "admin")) h += `<div class="chips"><select id="ip-${c.id}" aria-label="Form P disease for case ${c.id}"><option value="">Form P…</option>${pOpts}</select><button type="button" class="btn small" data-act="ip" data-id="${c.id}">Save</button></div>`;
       if (can("lab", "mo", "admin")) h += `<div class="chips"><select id="lt-${c.id}" aria-label="Test for case ${c.id}">${lOpts}</select>
         <select id="lr-${c.id}" aria-label="Result for case ${c.id}"><option value="pending">Pending</option><option value="positive">Positive</option><option value="negative">Negative</option></select>
-        <input id="ls-${c.id}" placeholder="Specimen ID" maxlength="40" class="note short" aria-label="Specimen ID for case ${c.id}"><button type="button" class="btn small" data-act="il" data-id="${c.id}">Save result</button></div>`;
+        <input id="ls-${c.id}" placeholder="Specimen ID" maxlength="40" class="note short" aria-label="Specimen ID for case ${c.id}">
+        <label class="small">Sample taken<input id="ld-${c.id}" type="date" value="${esc(c.lab_sample_on || "")}" aria-label="Sample date for case ${c.id}"></label><button type="button" class="btn small" data-act="il" data-id="${c.id}">Save result</button></div>`;
       return h ? `<details><summary class="small">${c.p_diagnosis || c.lab_test ? "Update" : "Add"} Form P or lab result</summary><div class="actbox">${h}</div></details>` : "";
     };
     view().innerHTML = `
@@ -905,7 +906,7 @@
       }
       else if (act === "il") {
         const body = { test: $("#lt-" + id).value, result: $("#lr-" + id).value, sample_id: $("#ls-" + id).value || null,
-          sample_on: new Date().toISOString().slice(0, 10) };
+          sample_on: $("#ld-" + id).value || null };
         await api(`/api/idsp/cases/${id}/lab`, { method: "POST", json: body });
         await render(); alertMsg(`Case ${id}: laboratory result saved.`);
       }

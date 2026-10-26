@@ -1,6 +1,7 @@
 """Kochi Coastal One Health Observatory: API and dashboard server."""
 import csv
 import io
+import math
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -774,7 +775,7 @@ def idsp_set_thresholds(body: dict, p: Principal = Depends(require("admin", "dso
             num = float(v)
         except (TypeError, ValueError):
             raise HTTPException(422, f"{k} must be a number.")
-        if num <= 0 or num > 10000:
+        if not math.isfinite(num) or num <= 0 or num > 10000:
             raise HTTPException(422, f"{k} is out of range.")
         clean[k] = int(num) if num == int(num) else num
     idsp.set_thresholds(db, clean)

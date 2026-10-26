@@ -104,7 +104,7 @@ def add(db, rnd=None, today=None):
     codes = [s.code for s in analytics.site_codes(db)]
 
     # 1. Community reports and camp diagnoses become signals waiting for an IDSP worker
-    idsp.capture_signals(db)
+    idsp.capture_signals(db, since_days=400)
 
     # 2. Most past signals were checked by an ASHA: by filing Form S (the usual way) or on the dashboard
     for c in db.query(IdspCase).filter(IdspCase.status == "unverified").order_by(IdspCase.id).all():
@@ -167,7 +167,7 @@ def add(db, rnd=None, today=None):
                     age=p7 and p7.age or 9, sex=p7 and p7.sex or "m", role="volunteer", condition="diarrhoea",
                     danger="no", dd={"stools_day": 6, "blood": "no", "vomiting": "yes", "dehyd": "none"},
                     dd_hh={"others_ill": 1, "water_src": "shared_well", "ors_given": "yes"})
-        idsp.capture_signals(db)
+        idsp.capture_signals(db, since_days=400)
         d.s_form(today - timedelta(days=3), "DC2-007", "lws", person=p7 and p7.person_id, age=p7 and p7.age or 9,
                  sex=p7 and p7.sex or "m", water_src="shared_well")
         d.s_form(today - timedelta(days=2), "DC2-009", "lws", person=p9 and p9.person_id, age=p9 and p9.age or 63,
@@ -180,7 +180,7 @@ def add(db, rnd=None, today=None):
                     age=p13 and p13.age or 41, sex=p13 and p13.sex or "m", role="volunteer", condition="diarrhoea",
                     danger="no", dd={"stools_day": 4, "blood": "no", "vomiting": "no", "dehyd": "none"},
                     dd_hh={"others_ill": 0, "water_src": "shared_well", "ors_given": "no"})
-        idsp.capture_signals(db)
+        idsp.capture_signals(db, since_days=400)
         child = db.query(IdspCase).filter(IdspCase.hh_id == "DC2-011").order_by(IdspCase.id.desc()).first()
         if child and child.status == "unverified":
             idsp.verify(db, child, "verified", "jphn", "jphn", "Child seen; blood in stool, ORS given, referred to PHC",
@@ -243,7 +243,7 @@ def add(db, rnd=None, today=None):
                  "dd_hh": {"others_ill": 0, "water_src": "own_well", "ors_given": "yes"}} if cond == "diarrhoea" else {}
         d.community(today - timedelta(days=ago), p.hh_id, form, person=p.person_id, age=p.age, sex=p.sex, role=role,
                     condition=cond, danger="yes" if cond in ("jaundice", "lepto") else "no", **extra)
-    idsp.capture_signals(db)
+    idsp.capture_signals(db, since_days=400)
 
     # 8. The medical officer's Form P and the lab's results on part of the earlier verified cases
     for c in (db.query(IdspCase).filter(IdspCase.status == "verified", IdspCase.p_diagnosis.is_(None),

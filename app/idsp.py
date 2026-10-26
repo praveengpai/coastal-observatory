@@ -233,7 +233,11 @@ def add_record(db: Session, kind: str, key: str, *, site, hh_id, person_id, age,
         if onset and (not c.onset or onset < c.onset):
             c.onset = onset
         if reported_on and (not c.first_reported or reported_on < c.first_reported):
-            c.first_reported = reported_on
+            c.first_reported, c.first_source = reported_on, kind
+        if kind != "idsp" and c.status in ("not_case", "unreachable"):
+            # a new report about someone found well or not reached earlier: check again
+            c.status, c.verified_on, c.verified_by = "unverified", None, None
+            c.verify_note = f"Reopened: reported again on {reported_on}"
     c.sources = _add_word(c.sources, kind)
     c.reporter_roles = _add_word(c.reporter_roles, role)
     c.urgent = bool(c.urgent or urgent or admitted or died or suspect == "cholera" or
@@ -256,17 +260,22 @@ def add_record(db: Session, kind: str, key: str, *, site, hh_id, person_id, age,
 
 # ------------------------------------------------------------------ capture from other modules
 
-def capture_signals(db: Session) -> dict:
-    """Turn new household reports and camp diagnoses into community signals. Idempotent; run after each sync."""
+def capture_signals(db: Session, since_days: int = 30, today: date | None = None) -> dict:
+    """Turn new household reports and camp diagnoses into community signals. Idempotent; run after each sync.
+
+    Records older than `since_days` are noted but not queued, so switching the module on does not flood the
+    verification queue with old, unverifiable reports.
+    """
     db.flush()
     seen = {k for (k,) in db.query(IdspOrigin.key)}
+    cutoff = (today or date.today()) - timedelta(days=since_days)
     n = Counter()
     for r in db.query(Report).filter(Report.condition.isnot(None)).order_by(Report.reported_on, Report.instance_id):
         key = f"community:{r.instance_id}"
         if key in seen:
             continue
         syndrome, suspect = _from_condition(r.condition, r.days_ill)
-        if not syndrome or not r.hh_id:
+        if not syndrome or not r.hh_id or not r.reported_on or r.reported_on < cutoff:
             db.add(IdspOrigin(key=key, case_id=None, kind="community", reported_on=r.reported_on,
                               site_code=r.site_code, role=r.reporter_role))
             continue
@@ -284,13 +293,13 @@ def capture_signals(db: Session) -> dict:
         dx = set(str((s.data or {}).get("dx") or "").split())
         hit = next((CAMP_DX[x] for x in ("diarrhoea", "lepto_susp") if x in dx), None)
         person = db.get(Person, s.person_id) if s.person_id else None
-        if not hit or not person or not person.hh_id:
+        if not hit or not person or not person.hh_id or not s.collected_on or s.collected_on < cutoff:
             db.add(IdspOrigin(key=key, case_id=None, kind="camp", reported_on=s.collected_on, site_code=s.site_code,
                               role="doctor"))
             continue
         add_record(db, "camp", key, site=s.site_code, hh_id=person.hh_id, person_id=person.person_id, age=s.age,
                    sex=person.sex, syndrome=hit[0], suspect=hit[1], onset=None, reported_on=s.collected_on,
-                   role="camp doctor")
+                   role="camp_doctor")
         n["camp"] += 1
     db.commit()
     return dict(n)
@@ -355,11 +364,27 @@ def verify(db: Session, c: IdspCase, outcome: str, username: str, role: str, not
            duplicate_of: int | None = None, today: date | None = None):
     if outcome not in VERIFY_OUTCOMES:
         raise ValueError("Outcome must be verified, not_case, duplicate or unreachable.")
+    if c.status == "duplicate":
+        raise ValueError(f"This case is already merged into case {c.duplicate_of}.")
     if outcome == "duplicate":
         other = db.get(IdspCase, duplicate_of) if duplicate_of else None
         if not other or other.id == c.id:
             raise ValueError("Give the case number this one duplicates.")
+        if other.status == "duplicate":
+            raise ValueError(f"Case {other.id} is itself a duplicate of case {other.duplicate_of}; use that number.")
+        if other.site_code != c.site_code:
+            raise ValueError("A case can only duplicate a case in the same ward.")
         other.sources = " ".join(sorted(set(other.sources.split()) | set(c.sources.split())))
+        other.reporter_roles = " ".join(sorted(set(other.reporter_roles.split()) | set(c.reporter_roles.split())))
+        if c.first_reported and (not other.first_reported or c.first_reported < other.first_reported):
+            other.first_reported, other.first_source = c.first_reported, c.first_source
+        if c.onset and (not other.onset or c.onset < other.onset):
+            other.onset = c.onset
+        other.urgent, other.admitted, other.died = (other.urgent or c.urgent, other.admitted or c.admitted,
+                                                    other.died or c.died)
+        other.work_days = max(other.work_days or 0, c.work_days or 0)
+        other.carer_days = max(other.carer_days or 0, c.carer_days or 0)
+        other.school_days = max(other.school_days or 0, c.school_days or 0)
         db.query(IdspOrigin).filter(IdspOrigin.case_id == c.id).update({"case_id": other.id})
         c.duplicate_of = other.id
     c.status = outcome
@@ -372,7 +397,7 @@ def verify(db: Session, c: IdspCase, outcome: str, username: str, role: str, not
 def set_presumptive(db: Session, c: IdspCase, diagnosis: str, username: str, today: date | None = None):
     if diagnosis not in P_LABEL:
         raise ValueError("Unknown Form P disease.")
-    c.p_diagnosis, c.p_by, c.p_on = diagnosis, username, today or date.today()
+    c.p_diagnosis, c.p_by, c.p_on, c.p_from_lab = diagnosis, username, today or date.today(), False
     if c.status != "verified":                      # the medical officer has seen the patient
         c.status, c.verified_on, c.verified_by = "verified", c.p_on, f"{username} (mo)"
     db.commit()
@@ -385,10 +410,14 @@ def set_lab(db: Session, c: IdspCase, test: str, result: str, username: str, sam
     if result not in ("positive", "negative", "pending"):
         raise ValueError("Result must be positive, negative or pending.")
     c.lab_test, c.lab_result, c.lab_by = test, result, username
-    c.lab_sample_on, c.lab_sample_id = sample_on, (sample_id or "").strip()[:40] or None
+    c.lab_sample_on = sample_on or c.lab_sample_on
+    c.lab_sample_id = (sample_id or "").strip()[:40] or c.lab_sample_id
     c.lab_on = today or date.today()
     if result == "positive" and not c.p_diagnosis and test in LAB_CONFIRMS:
-        c.p_diagnosis, c.p_by, c.p_on = LAB_CONFIRMS[test], username, c.lab_on
+        c.p_diagnosis, c.p_by, c.p_on, c.p_from_lab = LAB_CONFIRMS[test], username, c.lab_on, True
+    elif result != "positive" and c.p_from_lab:
+        c.p_diagnosis = c.p_by = c.p_on = None      # the diagnosis came only from the result now corrected
+        c.p_from_lab = False
     db.commit()
 
 
@@ -572,29 +601,36 @@ def _positions(db: Session, cs):
 
 
 def clusters(db: Session, cs, radius_m: float):
-    """Groups of cases that are neighbours: same household, within radius_m, or in the same ward when a
-    household has no GPS point yet (so a missing location never hides a cluster)."""
+    """Groups of neighbouring cases in ONE ward: same household or within radius_m. A case whose household
+    has no GPS point yet joins every group in its ward (so a missing location never hides a cluster) but
+    never links two groups together; with no located group in the ward, the unlocated cases form one group."""
     pos = _positions(db, cs)
-    parent = list(range(len(cs)))
+    out = []
+    for site in sorted({c.site_code for c in cs}):
+        here = [c for c in cs if c.site_code == site]
+        located = [c for c in here if c.hh_id in pos]
+        loose = [c for c in here if c.hh_id not in pos]
+        parent = list(range(len(located)))
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
 
-    for i in range(len(cs)):
-        for j in range(i + 1, len(cs)):
-            a, b = cs[i], cs[j]
-            pa, pb = pos.get(a.hh_id), pos.get(b.hh_id)
-            near = (a.hh_id and a.hh_id == b.hh_id) or (pa and pb and _haversine_m(pa, pb) <= radius_m) or \
-                   ((not pa or not pb) and a.site_code == b.site_code)
-            if near:
-                parent[find(i)] = find(j)
-    groups = defaultdict(list)
-    for i, c in enumerate(cs):
-        groups[find(i)].append(c)
-    return list(groups.values())
+        for i in range(len(located)):
+            for j in range(i + 1, len(located)):
+                a, b = located[i], located[j]
+                if a.hh_id == b.hh_id or _haversine_m(pos[a.hh_id], pos[b.hh_id]) <= radius_m:
+                    parent[find(i)] = find(j)
+        groups = defaultdict(list)
+        for i, c in enumerate(located):
+            groups[find(i)].append(c)
+        if groups:
+            out += [g + loose for g in groups.values()]
+        elif loose:
+            out.append(loose)
+    return out
 
 
 def water_links(db: Session, cs, today: date, days: int, radius_m: float):
@@ -626,7 +662,9 @@ def _upsert_alert(db: Session, key, site, kind, severity, title, reason, send_to
                 a.links = links
         return 0
     db.add(IdspAlert(rule_key=key, site_code=site, kind=kind, severity=severity, title=title, reason=reason,
-                     send_to=send_to, response=response, case_ids=ids, links=links or {}, status="open"))
+                     send_to=send_to, response=response, case_ids=ids, links=links or {}, status="open",
+                     opened_at=datetime.utcnow()))
+    db.flush()
     return 1
 
 
@@ -657,14 +695,16 @@ def generate_alerts(db: Session, codes, today: date | None = None) -> dict:
         for grp in clusters(db, cs, R):
             if len(grp) < th[n_key]:
                 continue
-            site = Counter(c.site_code for c in grp).most_common(1)[0][0]
+            site = grp[0].site_code
             links = water_links(db, grp, today, 30, th["water_radius_m"])
             pos = [w for w in links if w["result"] == "positive"]
+            homes = sorted({c.hh_id for c in grp})
             reason = (f"{len(grp)} verified cases within {int(R)} m in {th[d_key]} days "
-                      f"({', '.join(sorted({c.hh_id for c in grp}))})")
+                      f"({', '.join(homes[:12])}{f' and {len(homes) - 12} more' if len(homes) > 12 else ''})")
             if pos:
                 reason += f"; {len(pos)} positive water sample(s) within {int(th['water_radius_m'])} m"
-            n_new += _upsert_alert(db, f"{kind}:{site}:{wtag}", site, kind, "high", title, reason, send_to, response,
+            n_new += _upsert_alert(db, f"{kind}:{site}:{wtag}:{min(c.id for c in grp)}", site, kind, "high", title,
+                                   reason, send_to, response,
                                    [c.id for c in grp], {"water": links})
     # 2. Single cases that need action the same day
     for c in recent:
