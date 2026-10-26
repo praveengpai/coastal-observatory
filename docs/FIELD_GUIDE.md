@@ -50,6 +50,21 @@ The One Health form is for things that affect health but are not a person's illn
 dead fish, many rats, mosquito breeding, flooding, water that changed colour or smell, sewage overflow.
 Take a photo if useful, but never of people.
 
+## IDSP Form S (ASHAs, JPHNs and medical officers only)
+
+The **IDSP Form S** is on the phones of the "IDSP staff" account only, never on volunteers' phones.
+
+1. Choose **A case** for each person with an IDSP syndrome, or **Nil report** once a week when there is none.
+2. Scan the door sticker and pick the person, as in the report forms.
+3. Choose the **syndrome** from the IHIP Form S list. For loose stools the form asks about dehydration;
+   **severe dehydration** is reported as suspected cholera and the form tells you to refer today.
+4. A case entered here is verified straight away and counts in the IDSP weekly report.
+
+**Signals from volunteers and ward members.** Their household reports also arrive on the dashboard's
+**IDSP surveillance** tab, as signals to check. Visit or call, then press **Confirm**, **Not a case**,
+**Could not reach** or **Duplicate**, or simply file Form S for the same person: that confirms it too.
+A signal not checked within 72 hours (24 hours if urgent) passes to the JPHN.
+
 ## Stickers
 
 | Sticker | Looks like | Goes on |

@@ -230,7 +230,7 @@ class User(Base):
     __tablename__ = "app_user"
     username: Mapped[str] = mapped_column(String(60), primary_key=True)
     full_name: Mapped[str] = mapped_column(String(120))
-    role: Mapped[str] = mapped_column(String(12))     # admin | coordinator | scientist | doctor | asha | ward
+    role: Mapped[str] = mapped_column(String(12))     # admin coordinator scientist doctor asha ward jphn mo dso lab
     sites: Mapped[str] = mapped_column(String(200), default="*")   # space-separated site codes or *
     password_hash: Mapped[str] = mapped_column(String(200))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -293,6 +293,97 @@ class Report(Base):
     cost_rs: Mapped[int | None] = mapped_column(Integer)
     events: Mapped[str | None] = mapped_column(String(200))       # One Health events, space-separated
     data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class IdspCase(Base):
+    """One illness episode in the IDSP module: one person, one syndrome, one onset (within 14 days).
+
+    Every report about the same episode, from IDSP staff or from the community, joins the same row,
+    so a case is counted once however many people report it. Only VERIFIED cases count as IDSP data.
+    No names here: they stay in person_pii.
+    """
+    __tablename__ = "idsp_case"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    site_code: Mapped[str] = mapped_column(String(8), index=True)
+    hh_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    person_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    age: Mapped[int | None] = mapped_column(Integer)
+    sex: Mapped[str | None] = mapped_column(String(2))
+    syndrome: Mapped[str] = mapped_column(String(20), index=True)      # IHIP Form S syndrome code
+    suspect: Mapped[str | None] = mapped_column(String(20))            # e.g. cholera, typhoid, lepto, dengue
+    status: Mapped[str] = mapped_column(String(12), default="unverified", index=True)
+    # unverified | verified | not_case | duplicate | unreachable
+    first_source: Mapped[str] = mapped_column(String(10))              # community | camp | idsp
+    sources: Mapped[str] = mapped_column(String(60), default="")       # every source that reported it
+    reporter_roles: Mapped[str] = mapped_column(String(80), default="")
+    onset: Mapped[date | None] = mapped_column(Date)
+    first_reported: Mapped[date | None] = mapped_column(Date, index=True)
+    idsp_reported: Mapped[date | None] = mapped_column(Date)           # first IDSP Form S entry for it
+    verified_on: Mapped[date | None] = mapped_column(Date, index=True)
+    verified_by: Mapped[str | None] = mapped_column(String(60))
+    verify_note: Mapped[str | None] = mapped_column(String(300))
+    duplicate_of: Mapped[int | None] = mapped_column(Integer)
+    urgent: Mapped[bool] = mapped_column(Boolean, default=False)       # danger signs, admitted, death, under-5 dysentery
+    admitted: Mapped[bool] = mapped_column(Boolean, default=False)
+    died: Mapped[bool] = mapped_column(Boolean, default=False)
+    water_source: Mapped[str | None] = mapped_column(String(20))
+    work_days: Mapped[int] = mapped_column(Integer, default=0)
+    carer_days: Mapped[int] = mapped_column(Integer, default=0)
+    school_days: Mapped[int] = mapped_column(Integer, default=0)
+    p_diagnosis: Mapped[str | None] = mapped_column(String(20))        # IHIP Form P disease code
+    p_by: Mapped[str | None] = mapped_column(String(60))
+    p_on: Mapped[date | None] = mapped_column(Date)
+    lab_test: Mapped[str | None] = mapped_column(String(20))
+    lab_result: Mapped[str | None] = mapped_column(String(10))         # positive | negative | pending
+    lab_sample_id: Mapped[str | None] = mapped_column(String(40))
+    lab_sample_on: Mapped[date | None] = mapped_column(Date)
+    lab_on: Mapped[date | None] = mapped_column(Date)
+    lab_by: Mapped[str | None] = mapped_column(String(60))
+
+
+class IdspOrigin(Base):
+    """Which source record (form submission) fed which case. Makes signal capture idempotent."""
+    __tablename__ = "idsp_origin"
+    key: Mapped[str] = mapped_column(String(90), primary_key=True)     # "<kind>:<instance id>"
+    case_id: Mapped[int | None] = mapped_column(Integer, index=True)   # None: looked at, not an IDSP syndrome
+    kind: Mapped[str] = mapped_column(String(10))                      # community | camp | idsp
+    reported_on: Mapped[date | None] = mapped_column(Date, index=True)
+    site_code: Mapped[str | None] = mapped_column(String(8), index=True)
+    role: Mapped[str | None] = mapped_column(String(12))
+
+
+class IdspNil(Base):
+    """A nil report: an IDSP worker saying 'no cases of any listed syndrome in my area this week'."""
+    __tablename__ = "idsp_nil"
+    instance_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    site_code: Mapped[str] = mapped_column(String(8), index=True)
+    week_start: Mapped[date] = mapped_column(Date, index=True)
+    reported_on: Mapped[date | None] = mapped_column(Date)
+    role: Mapped[str | None] = mapped_column(String(12))
+
+
+class IdspAlert(Base):
+    """An early-warning alert with a named owner and a closure, so response times can be measured."""
+    __tablename__ = "idsp_alert"
+    __table_args__ = (UniqueConstraint("rule_key"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rule_key: Mapped[str] = mapped_column(String(100))
+    site_code: Mapped[str] = mapped_column(String(8), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    severity: Mapped[str] = mapped_column(String(10))                  # immediate | high | watch
+    title: Mapped[str] = mapped_column(String(300))
+    reason: Mapped[str] = mapped_column(String(500))
+    send_to: Mapped[str] = mapped_column(String(80))
+    response: Mapped[str] = mapped_column(String(200))
+    case_ids: Mapped[str] = mapped_column(String(400), default="")
+    links: Mapped[dict] = mapped_column(JSON, default=dict)            # water sources linked to the cases
+    status: Mapped[str] = mapped_column(String(12), default="open")    # open | acknowledged | closed
+    opened_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    ack_by: Mapped[str | None] = mapped_column(String(60))
+    ack_at: Mapped[datetime | None] = mapped_column(DateTime)
+    closed_by: Mapped[str | None] = mapped_column(String(60))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    action_taken: Mapped[str | None] = mapped_column(String(500))
 
 
 class Setting(Base):

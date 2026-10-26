@@ -6,18 +6,21 @@
     token: null, user: null, tab: null, layer: "combined", site: null, includeTest: false,
     scen: { rain_mm: 80, tide_m: 1.1, temp_c: 32, rh: 78 }, dataset: "samples", siteType: "",
     query: null, done: {}, cache: {}, rid: 0, rform: "", rdays: 90, wyear: "",
+    iweek: null, istatus: "verified",
   };
-  const TABS = { master: "Master dashboard", asha: "ASHA / field", ward: "Ward member",
+  const TABS = { master: "Master dashboard", idsp: "IDSP surveillance", asha: "ASHA / field", ward: "Ward member",
     science: "Scientist", reports: "Household reports", advisories: "Advisories", admin: "Admin" };
   const ROLE_TABS = {
-    admin: ["master", "asha", "ward", "science", "reports", "advisories", "admin"],
-    coordinator: ["master", "asha", "ward", "science", "reports", "advisories", "admin"],
-    scientist: ["master", "science", "reports"], doctor: ["master", "reports", "advisories", "asha"],
-    asha: ["asha", "reports", "advisories"], ward: ["ward", "reports"],
+    admin: ["master", "idsp", "asha", "ward", "science", "reports", "advisories", "admin"],
+    coordinator: ["master", "idsp", "asha", "ward", "science", "reports", "advisories", "admin"],
+    scientist: ["master", "science", "idsp", "reports"], doctor: ["master", "idsp", "reports", "advisories", "asha"],
+    asha: ["asha", "idsp", "reports", "advisories"], ward: ["ward", "reports"],
+    jphn: ["idsp"], mo: ["idsp", "master"], dso: ["idsp", "master"], lab: ["idsp"],
   };
   const ROLE_NAMES = { admin: "Admin", coordinator: "Coordinator", scientist: "Scientist", doctor: "Doctor",
-    asha: "ASHA", ward: "Ward member" };
-  const ANALYSTS = ["admin", "coordinator", "scientist", "doctor"];
+    asha: "ASHA", ward: "Ward member", jphn: "JPHN / JHI", mo: "Medical officer", dso: "District Surveillance Officer",
+    lab: "Laboratory" };
+  const ANALYSTS = ["admin", "coordinator", "scientist", "doctor", "mo", "dso"];
   const LAYERS = [["combined", "Combined"], ["water", "Water"], ["illness", "Illness"], ["salinity", "Salinity"],
     ["heat", "Heat"], ["vulnerability", "Elder vulnerability"]];
   const LAYER_NOTE = { combined: "Highest of all layers", water: "Positive samples, 8 weeks (NIO lab, else Aquadip©)",
@@ -94,7 +97,7 @@
   async function start() {
     S.user = await api("/api/me");
     $("#login").hidden = true; $("#shell").hidden = false;
-    $("#who").textContent = `${S.user.name} · ${S.user.role}` + (S.user.sites !== "*" ? ` · sites ${S.user.sites}` : "");
+    $("#who").textContent = `${S.user.name} · ${ROLE_NAMES[S.user.role] || S.user.role}` + (S.user.sites !== "*" ? ` · sites ${S.user.sites}` : "");
     $("#test-toggle").hidden = !can("admin", "coordinator");
     const tabs = ROLE_TABS[S.user.role] || [];
     S.tab = tabs.includes(S.tab) ? S.tab : tabs[0];
@@ -113,7 +116,7 @@
     const rid = ++S.rid;
     view().innerHTML = `<p class="mut">Loading…</p>`;
     try {
-      await ({ master: renderMaster, asha: renderAsha, ward: renderWard, science: renderScience,
+      await ({ master: renderMaster, idsp: renderIdsp, asha: renderAsha, ward: renderWard, science: renderScience,
         reports: renderReports, advisories: renderAdvisories, admin: renderAdmin })[S.tab](rid);
     } catch (err) {
       if (err.message !== "Signed out") view().innerHTML = `<p class="error">${esc(err.message)}</p>`;
@@ -518,6 +521,235 @@
     </section>`;
   }
 
+  // ---------------------------------------------------------------- IDSP surveillance
+  const GROUP_COLOUR = { diarrhoeal: "#B8461A", fever: "#C98A12", respiratory: "#0E7C86", jaundice: "#7A5BA6", other: "#7A8B90" };
+  const SEV_LABEL = { immediate: "Act today", high: "High", watch: "Watch" };
+  const isoDay = (d) => d.toISOString().slice(0, 10);
+  const shiftWeek = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 7 * n); return isoDay(d); };
+  const fmtDay = (iso) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "–");
+  const sexAge = (r) => [r.age == null ? null : r.age + " y", r.sex ? r.sex.toUpperCase() : null].filter(Boolean).join(", ") || "–";
+  const IDSP_VERIFY = ["admin", "asha", "jphn", "mo"];
+  const IDSP_ALERT = ["admin", "jphn", "mo", "dso"];
+  const IDSP_EXPORT = ["admin", "coordinator", "mo", "dso"];
+
+  function idspMap(m) {
+    const pts = [...m.sites.map((s) => [s.lat, s.lon]), ...m.cases.map((c) => [c.lat, c.lon]), ...m.water.map((w) => [w.lat, w.lon])];
+    if (!pts.length) return `<p class="empty">No household locations yet. Form S records the GPS point of each house.</p>`;
+    const lats = pts.map((p) => p[0]), lons = pts.map((p) => p[1]);
+    const pad = 0.002, minLat = Math.min(...lats) - pad, maxLat = Math.max(...lats) + pad;
+    const minLon = Math.min(...lons) - pad, maxLon = Math.max(...lons) + pad;
+    const W = 620, H = 340;
+    const X = (lon) => 24 + ((lon - minLon) / (maxLon - minLon || 1)) * (W - 48);
+    const Y = (lat) => H - 24 - ((lat - minLat) / (maxLat - minLat || 1)) * (H - 48);
+    const water = m.water.map((w) => `<rect x="${(X(w.lon) - 4).toFixed(1)}" y="${(Y(w.lat) - 4).toFixed(1)}" width="8" height="8" rx="1.5"
+      fill="${w.positive ? "#12262E" : "none"}" stroke="#12262E" stroke-width="1.2" opacity="${w.positive ? 0.9 : 0.45}"><title>Water sample ${esc(w.sample_id)}: ${w.positive ? "positive" : "negative"}</title></rect>`).join("");
+    const cases = m.cases.map((c) => { const col = GROUP_COLOUR[c.group] || GROUP_COLOUR.other; const v = c.status === "verified";
+      return `<circle cx="${X(c.lon).toFixed(1)}" cy="${Y(c.lat).toFixed(1)}" r="6.5" fill="${v ? col : "#fff"}" fill-opacity="${v ? 0.85 : 1}" stroke="${col}" stroke-width="${v ? 1.5 : 2.5}"><title>Case ${c.id} · ${esc(c.hh_id)} · ${v ? "verified" : "awaiting verification"}</title></circle>`; }).join("");
+    const labels = m.sites.map((s) => `<text x="${X(s.lon).toFixed(1)}" y="${(Y(s.lat) - 12).toFixed(1)}" font-size="12" font-weight="600" text-anchor="middle" fill="#4A5D63">${esc(s.code)}</text>`).join("");
+    const legend = Object.entries(GROUP_COLOUR).filter(([g]) => m.cases.some((c) => c.group === g))
+      .map(([g, col]) => `<span><i class="sw" style="background:${col};border-radius:50%"></i>${esc(g[0].toUpperCase() + g.slice(1))}</span>`).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Households with IDSP cases and water samples in the past 30 days" style="width:100%;height:auto;background:#EEF4F4;border-radius:8px">
+      <text x="${W - 10}" y="18" font-size="11" text-anchor="end" fill="#4A5D63">N ↑ · positions to scale, no base map</text>${labels}${water}${cases}</svg>
+      <div class="legend">${legend}<span><i class="sw" style="background:#fff;border:2.5px solid #7A8B90;border-radius:50%"></i>Awaiting verification</span>
+        <span><i class="sw" style="background:#12262E"></i>Positive water sample</span><span><i class="sw" style="border:1.2px solid #12262E;opacity:.5"></i>Negative</span>
+        ${m.cases_without_location ? `<span class="mut">${m.cases_without_location} case(s) without a house location</span>` : ""}</div>`;
+  }
+
+  function idspTrend(trend, groups) {
+    const W = 560, H = 200, L = 30, R = 10, T = 12, B = 28;
+    const keys = Object.keys(groups);
+    const tot = trend.map((w) => keys.reduce((a, k) => a + w[k], 0));
+    const max = Math.max(4, ...tot);
+    const bw = (W - L - R) / trend.length;
+    const y = (v) => T + (1 - v / max) * (H - T - B);
+    const bars = trend.map((w, i) => { let acc = 0;
+      return keys.map((k) => { if (!w[k]) return ""; const y0 = y(acc), y1 = y(acc + w[k]); acc += w[k];
+        return `<rect x="${(L + i * bw + 3).toFixed(1)}" y="${y1.toFixed(1)}" width="${(bw - 6).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${GROUP_COLOUR[k]}"><title>Week ${w.week}: ${w[k]} ${esc(groups[k].toLowerCase())}</title></rect>`; }).join(""); }).join("");
+    const ticks = [0, Math.round(max / 2), max].map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#E3EAEB"></line><text x="${L - 6}" y="${y(v) + 4}" font-size="11" text-anchor="end" fill="#4A5D63">${v}</text>`).join("");
+    const lab = trend.map((w, i) => (i % 2 === 1 || i === trend.length - 1 ? `<text x="${(L + i * bw + bw / 2).toFixed(1)}" y="${H - 8}" font-size="11" text-anchor="middle" fill="#4A5D63">W${w.week}</text>` : "")).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Verified IDSP cases per week by syndrome group, past 12 weeks" style="width:100%;height:auto">${ticks}${bars}${lab}</svg>
+      <div class="legend">${keys.filter((k) => trend.some((w) => w[k])).map((k) => `<span><i class="sw" style="background:${GROUP_COLOUR[k]}"></i>${esc(groups[k])}</span>`).join("")}</div>`;
+  }
+
+  function formTable(rows, title, showZero) {
+    const list = showZero ? rows : rows.filter((r) => r.total);
+    const unknown = rows.some((r) => r.unknown);
+    if (!list.length) return `<p class="empty">No ${esc(title)} cases this week.</p>`;
+    return `<div class="scroll"><table class="ihip"><tr><th rowspan="2">${esc(title)}</th><th colspan="2" class="c">Male</th><th colspan="2" class="c">Female</th>${unknown ? `<th rowspan="2" class="c">Not recorded</th>` : ""}<th rowspan="2" class="c">Total</th></tr>
+      <tr><th class="c">≤5 y</th><th class="c">&gt;5 y</th><th class="c">≤5 y</th><th class="c">&gt;5 y</th></tr>
+      ${list.map((r) => `<tr class="${r.total ? "" : "zero"}"><td>${esc(r.label)}</td>${["m_le5", "m_gt5", "f_le5", "f_gt5"].concat(unknown ? ["unknown"] : []).map((k) => `<td class="n c">${r[k] || "·"}</td>`).join("")}<td class="n c"><b>${r.total || "·"}</b></td></tr>`).join("")}
+      <tr class="tot"><td>Total</td>${["m_le5", "m_gt5", "f_le5", "f_gt5"].concat(unknown ? ["unknown"] : []).map((k) => `<td class="n c">${list.reduce((a, r) => a + r[k], 0)}</td>`).join("")}<td class="n c"><b>${list.reduce((a, r) => a + r.total, 0)}</b></td></tr></table></div>`;
+  }
+
+  function queueItem(c) {
+    const who = c.name ? `${esc(c.name)}${c.phone ? " · " + esc(c.phone) : ""}` : c.person_id ? esc(c.person_id) : `<span class="mut">Name not shared</span>`;
+    const act = can(...IDSP_VERIFY);
+    return `<div class="qitem ${c.urgent ? "urgent" : ""}">
+      <div class="qtop"><b>${esc(c.syndrome_label)}</b>${c.suspect ? ` <span class="pill warn">${esc(c.suspect)}</span>` : ""}${c.urgent ? ` <span class="pill red">Urgent</span>` : ""}${c.overdue ? ` <span class="pill red">Past deadline · with JPHN</span>` : ""}</div>
+      <p class="mut">${esc(c.hh_id)} · ${who} · ${esc(sexAge(c))}</p>
+      <p class="mut small">${esc(c.first_source)} by ${esc(c.reported_by || "–")} on ${fmtDay(c.first_reported)} · verify by ${fmtDay(c.due)} · case ${c.id}</p>
+      ${act ? `<div class="chips"><input class="note" id="vn-${c.id}" placeholder="Note (optional)" maxlength="300" aria-label="Note for case ${c.id}">
+        <button type="button" class="btn small ok" data-act="iverify" data-id="${c.id}" data-outcome="verified">Confirm</button>
+        <button type="button" class="btn small" data-act="iverify" data-id="${c.id}" data-outcome="not_case">Not a case</button>
+        <button type="button" class="btn small" data-act="iverify" data-id="${c.id}" data-outcome="unreachable">Could not reach</button>
+        <button type="button" class="btn small" data-act="iverify" data-id="${c.id}" data-outcome="duplicate">Duplicate</button></div>` : ""}
+    </div>`;
+  }
+
+  function alertItem(a) {
+    const act = can(...IDSP_ALERT);
+    const water = a.water.length ? `<details><summary class="small">Water sources linked (${a.water.length})</summary><table>${a.water.map((w) => `<tr><td>${esc(w.sample_id)}</td><td>${esc(w.hh_id || w.source || "–")}</td><td>${fmtDay(w.collected_on)}</td><td><b class="${w.result === "positive" ? "error" : ""}">${esc(w.result || "–")}</b> <span class="mut small">${esc(w.method)}</span></td></tr>`).join("")}</table></details>` : "";
+    const state = a.status === "closed" ? `Closed by ${esc(a.closed_by)} after ${a.hours_open} h: ${esc(a.action_taken)}`
+      : a.status === "acknowledged" ? `Acknowledged by ${esc(a.ack_by)} · open ${a.hours_open} h` : `Open ${a.hours_open} h · not yet acknowledged`;
+    return `<div class="alert sev-${esc(a.severity)} ${a.status === "closed" ? "closed" : ""}">
+      <div class="qtop"><span class="pill sev">${esc(SEV_LABEL[a.severity] || a.severity)}</span><b>${esc(a.title)}</b><span class="mut small">${esc(a.site)}</span></div>
+      <p>${esc(a.reason)}</p>
+      <p class="mut small">Send to: ${esc(a.send_to)} · Expected: ${esc(a.response)}${a.case_ids.length ? ` · Cases ${a.case_ids.map((x) => "#" + x).join(", ")}` : ""}</p>
+      ${water}
+      <p class="small status-line">${state}</p>
+      ${act && a.status !== "closed" ? `<div class="chips">${a.status === "open" ? `<button type="button" class="btn small" data-act="ialert" data-id="${a.id}" data-action="acknowledge">Acknowledge</button>` : ""}
+        <input class="note" id="an-${a.id}" placeholder="What was done (needed to close)" maxlength="500" aria-label="Action taken for alert ${a.id}">
+        <button type="button" class="btn small ok" data-act="ialert" data-id="${a.id}" data-action="close">Close alert</button></div>` : ""}
+    </div>`;
+  }
+
+  async function renderIdsp(rid) {
+    if (!S.iweek) {
+      const t = new Date(); const day = (t.getDay() + 6) % 7; t.setDate(t.getDate() - day - 7);
+      S.iweek = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    }
+    const role = S.user.role;
+    const seesQueue = !["scientist", "lab"].includes(role);
+    const [ov, queue, alerts, meta, cases, th] = await Promise.all([
+      get(`/api/idsp/overview?week=${S.iweek}`), seesQueue ? get("/api/idsp/queue") : [], get("/api/idsp/alerts"),
+      get("/api/idsp/meta"), get(`/api/idsp/cases?week=${S.iweek}${S.istatus ? "&status=" + S.istatus : ""}`),
+      get("/api/idsp/thresholds")]);
+    S.cache.idspMeta = meta;
+    if (rid !== S.rid) return;
+    const k = ov.kpi, cm = ov.community, wk = ov.weekly, rsp = ov.response;
+    const thisWeek = (() => { const t = new Date(); const day = (t.getDay() + 6) % 7; t.setDate(t.getDate() - day); return t; })();
+    const canNext = new Date(shiftWeek(S.iweek, 1) + "T00:00:00") <= thisWeek;
+    const openAlerts = alerts.filter((a) => a.status !== "closed"), closedAlerts = alerts.filter((a) => a.status === "closed");
+    const tile = (label, value, sub, tone) => `<div class="card kpi ${tone || ""}"><p class="mut small">${esc(label)}</p><p class="num">${esc(value)}</p><p class="small" style="margin:0">${sub}</p></div>`;
+    const stateClass = { "Reported": "lv-low", "Reported, no cases": "lv-low", "Nil report": "lv-low", "Not reported": "lv-high" };
+    const pOpts = meta.p_diseases.map((d) => `<option value="${esc(d.code)}">${esc(d.label)}</option>`).join("");
+    const lOpts = meta.lab_tests.map((d) => `<option value="${esc(d.code)}">${esc(d.label)}</option>`).join("");
+    const caseActions = (c) => {
+      if (c.status !== "verified") return "";
+      let h = "";
+      if (can("mo", "admin")) h += `<div class="chips"><select id="ip-${c.id}" aria-label="Form P disease for case ${c.id}"><option value="">Form P…</option>${pOpts}</select><button type="button" class="btn small" data-act="ip" data-id="${c.id}">Save</button></div>`;
+      if (can("lab", "mo", "admin")) h += `<div class="chips"><select id="lt-${c.id}" aria-label="Test for case ${c.id}">${lOpts}</select>
+        <select id="lr-${c.id}" aria-label="Result for case ${c.id}"><option value="pending">Pending</option><option value="positive">Positive</option><option value="negative">Negative</option></select>
+        <input id="ls-${c.id}" placeholder="Specimen ID" maxlength="40" class="note short" aria-label="Specimen ID for case ${c.id}"><button type="button" class="btn small" data-act="il" data-id="${c.id}">Save result</button></div>`;
+      return h ? `<details><summary class="small">${c.p_diagnosis || c.lab_test ? "Update" : "Add"} Form P or lab result</summary><div class="actbox">${h}</div></details>` : "";
+    };
+    view().innerHTML = `
+    <div id="flash" class="mut" role="status" style="font-weight:600"></div>
+    <section class="card dark idsp-head" aria-label="IDSP reporting week">
+      <div><p class="lbl">Integrated Disease Surveillance Programme · household-level pilot</p>
+        <h2 style="font-size:22px">IDSP surveillance</h2>
+        <p class="mut">Only verified cases count. Reports from volunteers, ward members and camps wait here as signals until an ASHA, JPHN or medical officer confirms them.</p></div>
+      <div class="weeknav" role="group" aria-label="Reporting week">
+        <button type="button" class="btn small" data-act="iweek" data-dir="-1" aria-label="Previous week">‹</button>
+        <div><b>${esc(wk.label)}</b><br><span class="small mut">IDSP week, Monday to Sunday${wk.complete ? "" : " · in progress"}</span></div>
+        <button type="button" class="btn small" data-act="iweek" data-dir="1" aria-label="Next week" ${canNext ? "" : "disabled"}>›</button>
+      </div>
+    </section>
+
+    <section class="streams" aria-label="Key figures">
+      ${tile("Verified cases this week", k.verified_week, `${k.verified_prev_week} the week before`)}
+      ${tile("Signals awaiting verification", k.awaiting, k.overdue ? `<b class="error">${k.overdue} past the deadline</b>` : "None past the deadline", k.overdue ? "warnc" : "")}
+      ${tile("Urgent signals waiting", k.urgent_waiting, "Danger signs, admission, under-5 dysentery", k.urgent_waiting ? "warnc" : "")}
+      ${tile("Open alerts", k.alerts_open, rsp.median_hours_to_acknowledge != null ? `Median ${num(rsp.median_hours_to_acknowledge, 1)} h to acknowledge` : "No alerts yet", k.alerts_open ? "warnc" : "")}
+      ${tile("Reporting completeness", pct(k.completeness), "Wards with Form S or a nil report")}
+      ${tile("Onset to report", k.median_onset_to_report_days == null ? "–" : num(k.median_onset_to_report_days, 1) + " days", "Median, verified cases, 90 days")}
+    </section>
+
+    <div class="row">
+      ${seesQueue ? `<section class="card ${role === "asha" || role === "jphn" ? "grow" : "side"}" aria-label="Verification queue"><p class="lbl">Verification queue</p>
+        <h2>Community signals to confirm (${queue.length})</h2>
+        <p class="mut">Visit or call, then confirm. Filing Form S for the same person confirms it too. Unchecked signals pass to the JPHN after ${esc(th.verify_hours)} hours (${esc(th.urgent_verify_hours)} if urgent).</p>
+        ${queue.map(queueItem).join("") || `<p class="empty">Nothing waiting. Every signal has been checked.</p>`}</section>` : ""}
+      <section class="card ${seesQueue && (role === "asha" || role === "jphn") ? "side" : "grow"}" aria-label="Alerts"><p class="lbl">Early warning</p>
+        <div class="form-row" style="justify-content:space-between"><h2>Alerts (${openAlerts.length} open)</h2>
+          ${can("admin", "coordinator", "mo", "dso") ? `<button type="button" class="btn small" data-act="irun">Check thresholds now</button>` : ""}</div>
+        <p class="mut">From verified cases only. Each alert names who acts and what is expected; closing it records what was done.</p>
+        ${openAlerts.map(alertItem).join("") || `<p class="empty">No open alerts.</p>`}
+        ${closedAlerts.length ? `<details><summary class="small">Closed in the past 30 days (${closedAlerts.length})</summary>${closedAlerts.map(alertItem).join("")}</details>` : ""}
+      </section>
+    </div>
+
+    <div class="row">
+      <section class="card grow" aria-label="Cases and water map"><p class="lbl">One Health view</p>
+        <h2>Where the cases are, and what the water shows</h2>
+        <p class="mut">Households with IDSP cases in the past 30 days, and water samples tested by NIO and Aquadip© in the same period.</p>
+        ${idspMap(ov.map)}</section>
+      <section class="card dark side" aria-label="Value of community reporting"><p class="lbl">Why community signals matter</p>
+        <h2>Past 90 days</h2>
+        <div class="kv">
+          <div><span>Verified cases</span><strong>${esc(cm.verified_90d)}</strong></div>
+          <div><span>First flagged by the community</span><strong>${pct(cm.share)}</strong></div>
+          <div><span>Found only through the community</span><strong>${esc(cm.found_only_through_community)}</strong></div>
+          <div><span>Days earlier than Form S (median)</span><strong>${cm.median_lead_days == null ? "–" : num(cm.median_lead_days, 1)}</strong></div>
+          <div><span>Signals checked on time</span><strong>${pct(cm.verified_on_time_share)}</strong></div>
+          <div><span>Signals that were not cases</span><strong>${esc(cm.not_cases)} of ${esc(cm.signals_checked)}</strong></div>
+        </div>
+        <p class="mut small">The IDSP form guidelines already include village volunteers' information in Form S. Here every such report is checked by a health worker before it counts.</p></section>
+    </div>
+
+    <section class="card" aria-label="Weekly IDSP forms"><div class="form-row" style="justify-content:space-between">
+      <div><p class="lbl">Weekly report, IHIP layout</p><h2>Form S: syndromic cases · ${esc(wk.label)}</h2></div>
+      ${can(...IDSP_EXPORT) ? `<div class="chips"><button type="button" class="btn small" data-act="idl" data-path="/api/idsp/weekly.csv?week=${esc(S.iweek)}" data-name="idsp-form-s-p-${esc(S.iweek)}.csv">Form S and P (CSV)</button>
+        <button type="button" class="btn small" data-act="idl" data-path="/api/idsp/linelist.csv?week=${esc(S.iweek)}" data-name="idsp-line-list-${esc(S.iweek)}.csv">Line list (CSV)</button></div>` : ""}</div>
+      <p class="mut">${wk.verified} verified · ${wk.pending} still awaiting verification (not counted) · ${wk.excluded} found not to be cases or duplicates. ${esc(wk.note)}</p>
+      <div class="row">
+        <div class="grow">${formTable(wk.form_s, "Syndrome (Form S)", true)}</div>
+        <div class="side" style="display:flex;flex-direction:column;gap:14px">
+          <div><h2 style="font-size:16px">Reporting units</h2><table>${wk.sites.map((s2) => `<tr><td>${esc(s2.label)}<br><span class="mut small">${esc(s2.site)}</span></td><td><span class="status ${stateClass[s2.state] || ""}" style="padding:2px 6px;border-radius:4px">${esc(s2.state)}</span></td><td class="n">${s2.cases}</td></tr>`).join("")}</table></div>
+          <div><h2 style="font-size:16px">Form P: presumptive</h2>${formTable(wk.form_p, "Disease (Form P)", false)}</div>
+          <div><h2 style="font-size:16px">Form L: laboratory</h2>${wk.form_l.length ? `<table><tr><th>Case</th><th>Test</th><th>Result</th></tr>${wk.form_l.map((l) => `<tr><td>#${l.id}<br><span class="mut small">${esc(l.provisional)}</span></td><td>${esc(l.test)}<br><span class="mut small">${esc(l.sample_id || "")}</span></td><td><b class="${l.result === "positive" ? "error" : ""}">${esc(l.result)}</b></td></tr>`).join("")}</table>` : `<p class="empty">No laboratory results this week.</p>`}</div>
+        </div></div>
+    </section>
+
+    <div class="row">
+      <section class="card grow" aria-label="Trend"><p class="lbl">Trend</p><h2>Verified cases per IDSP week</h2>${idspTrend(ov.trend, ov.groups)}</section>
+      <section class="card warm side" aria-label="Productive days lost"><p class="lbl">Economic burden</p><h2>Water-borne illness, past 12 months</h2>
+        <div class="outs"><div class="out"><span class="mut small">Verified episodes</span><span class="num">${esc(ov.workdays.episodes)}</span></div>
+          <div class="out"><span class="mut small">Workdays lost</span><span class="num">${esc(ov.workdays.work_days)}</span></div>
+          <div class="out"><span class="mut small">Days family stayed home</span><span class="num">${esc(ov.workdays.carer_days)}</span></div>
+          <div class="out"><span class="mut small">School days missed</span><span class="num">${esc(ov.workdays.school_days)}</span></div></div>
+        <p class="mut small">Diarrhoea, dysentery and jaundice. Each episode counted once, however many people reported it.</p>
+        <p class="mut small">Alerts in 90 days: ${esc(rsp.alerts_90d)} · closed within 48 hours: ${pct(rsp.closed_within_48h_share)}</p></section>
+    </div>
+
+    <section class="card" aria-label="Line list"><div class="form-row" style="justify-content:space-between">
+      <div><p class="lbl">Line list</p><h2>Cases first reported in ${esc(wk.label)}</h2></div>
+      <label>Show<select data-act="istatus">${[["verified", "Verified"], ["unverified", "Awaiting verification"], ["not_case", "Not a case"], ["unreachable", "Could not be reached"], ["duplicate", "Duplicates"], ["", "All"]].map(([v, l]) => `<option value="${v}" ${v === S.istatus ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+      <p class="mut">${S.user && ["dso", "scientist", "lab"].includes(role) ? "Names are held by the ASHA, JPHN and medical officer." : "Names appear only where the family agreed."}</p>
+      ${cases.length ? `<div class="scroll"><table><tr><th>Case</th><th>Household</th><th>Person</th><th>Age, sex</th><th>Form S</th><th>Tier</th><th>Form P / lab</th><th>Onset</th><th>Reported</th><th>Sources</th><th>Status</th>${can("mo", "lab", "admin") ? "<th>Medical officer / lab</th>" : ""}</tr>
+        ${cases.map((c) => `<tr><td class="n">#${c.id}${c.urgent ? ' <b class="error">!</b>' : ""}</td><td>${esc(c.hh_id || "–")}<br><span class="mut small">${esc(c.site)}</span></td>
+          <td>${c.name ? esc(c.name) : esc(c.person_id || "–")}</td><td>${esc(sexAge(c))}</td><td>${esc(c.syndrome_label)}${c.suspect ? `<br><span class="mut small">${esc(c.suspect)}</span>` : ""}</td>
+          <td><span class="pill tier">${esc(c.status === "verified" ? c.tier : "–")}</span></td>
+          <td>${esc(c.p_diagnosis || "–")}${c.lab_test ? `<br><span class="small">${esc(c.lab_test)}: <b class="${c.lab_result === "positive" ? "error" : ""}">${esc(c.lab_result)}</b></span>` : ""}</td>
+          <td class="nw">${fmtDay(c.onset)}</td><td class="nw">${fmtDay(c.first_reported)}</td><td class="small">${c.sources.map(esc).join("<br>")}</td>
+          <td class="small">${esc(c.status_label)}${c.verified_by ? `<br><span class="mut">${esc(c.verified_by)}</span>` : ""}${c.duplicate_of ? `<br><span class="mut">of #${c.duplicate_of}</span>` : ""}</td>
+          ${can("mo", "lab", "admin") ? `<td>${caseActions(c)}</td>` : ""}</tr>`).join("")}</table></div>` : `<p class="empty">No cases with this status in this week.</p>`}
+    </section>
+
+    <section class="card" aria-label="Alert thresholds"><p class="lbl">Thresholds</p><h2>Alert thresholds agreed with the District Surveillance Officer</h2>
+      <p class="mut">Starting values for the pilot. ${can("dso", "admin") ? "Change them here; every change is logged." : "Only the District Surveillance Officer can change them."}</p>
+      <form id="th-form" class="thgrid">${meta.thresholds.map((t) => `<label>${esc(t.label)}<input name="${esc(t.key)}" type="number" min="1" step="1" value="${esc(th[t.key])}" ${can("dso", "admin") ? "" : "disabled"}></label>`).join("")}
+        ${can("dso", "admin") ? `<button class="btn primary" type="submit">Save thresholds</button>` : ""}</form>
+    </section>`;
+    const tf = $("#th-form");
+    if (tf && can("dso", "admin")) tf.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries([...new FormData(tf).entries()].map(([kk, v]) => [kk, Number(v)]));
+      try { await api("/api/idsp/thresholds", { method: "POST", json: body }); alertMsg("Thresholds saved."); }
+      catch (err) { alertMsg(err.message); }
+    });
+  }
+
   // ---------------------------------------------------------------- admin
   async function renderAdmin(rid) {
     const admin = can("admin");
@@ -552,7 +784,7 @@
         <form id="user-form" class="form-row" style="flex-direction:column;align-items:stretch">
           <label>Username<input name="username" required pattern="[a-z0-9._-]{3,60}"></label>
           <label>Full name<input name="full_name" required></label>
-          <label>Role<select name="role">${Object.keys(ROLE_NAMES).map((r) => `<option>${r}</option>`).join("")}</select></label>
+          <label>Role<select name="role">${Object.entries(ROLE_NAMES).map(([r, l]) => `<option value="${r}">${r} (${esc(l)})</option>`).join("")}</select></label>
           <label>Sites (codes separated by spaces, or *)<input name="sites" value="*"></label>
           <label>Temporary password (10+ characters)<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
           <button class="btn primary" type="submit">Save user</button></form></section>` : ""}
@@ -641,6 +873,42 @@
         $("#pg-box").innerHTML = users.map((u) => `<label class="check"><input type="checkbox" name="pg" value="${u.id}"> ${esc(u.name)}</label>`).join("") || "No phone accounts found.";
       }
       else if (act === "export") { await download(`/api/export/${S.dataset}.csv`, `observatory-${S.dataset}.csv`); }
+      else if (act === "iweek") { S.iweek = shiftWeek(S.iweek, Number(b.dataset.dir)); render(); }
+      else if (act === "iverify") {
+        const body = { outcome: b.dataset.outcome, note: ($("#vn-" + id) || {}).value || null };
+        if (body.outcome === "duplicate") {
+          const other = window.prompt("This signal repeats which case? Enter its case number.");
+          if (!other) return;
+          body.duplicate_of = Number(String(other).replace(/[^0-9]/g, ""));
+        }
+        b.disabled = true;
+        await api(`/api/idsp/cases/${id}/verify`, { method: "POST", json: body });
+        await render(); alertMsg(`Case ${id}: ${body.outcome.replace("_", " ")}.`);
+      }
+      else if (act === "ialert") {
+        const note = ($("#an-" + id) || {}).value || null;
+        b.disabled = true;
+        await api(`/api/idsp/alerts/${id}`, { method: "POST", json: { action: b.dataset.action, note } });
+        await render(); alertMsg(b.dataset.action === "close" ? "Alert closed." : "Alert acknowledged.");
+      }
+      else if (act === "irun") {
+        b.disabled = true; alertMsg("Checking…");
+        const r = await api(withQs("/api/idsp/run"), { method: "POST" });
+        await render(); alertMsg(`Checked: ${r.alerts_created} new alert(s).`);
+      }
+      else if (act === "idl") { await download(b.dataset.path, b.dataset.name); }
+      else if (act === "ip") {
+        const v = $("#ip-" + id).value;
+        if (!v) { alertMsg("Choose a Form P disease first."); return; }
+        await api(`/api/idsp/cases/${id}/presumptive`, { method: "POST", json: { diagnosis: v } });
+        await render(); alertMsg(`Case ${id}: Form P saved.`);
+      }
+      else if (act === "il") {
+        const body = { test: $("#lt-" + id).value, result: $("#lr-" + id).value, sample_id: $("#ls-" + id).value || null,
+          sample_on: new Date().toISOString().slice(0, 10) };
+        await api(`/api/idsp/cases/${id}/lab`, { method: "POST", json: body });
+        await render(); alertMsg(`Case ${id}: laboratory result saved.`);
+      }
       else if (act === "job") {
         b.disabled = true; alertMsg("Working…");
         const r = await api(withQs(b.dataset.path), { method: "POST" });
@@ -656,6 +924,7 @@
     else if (t.dataset.act === "rform") { S.rform = t.value; render(); }
     else if (t.dataset.act === "rdays") { S.rdays = Number(t.value); render(); }
     else if (t.dataset.act === "wyear") { S.wyear = t.value; render(); }
+    else if (t.dataset.act === "istatus") { S.istatus = t.value; render(); }
     else if (t.dataset.act === "upload" && t.files.length) {
       const fd = new FormData();
       fd.append("file", t.files[0]);

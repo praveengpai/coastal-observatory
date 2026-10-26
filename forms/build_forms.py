@@ -1062,6 +1062,120 @@ def form_report_onehealth():
                             "concat(${camp_site}, ' · ', ${today})")
 
 
+# ================================================================ IDSP FORM S
+# The IDSP module's own form, for ASHAs, JPHNs and medical officers. Syndromes follow the IHIP Form S list.
+# It shares the household sticker, person list and "effect on daily life" questions with the report forms,
+# so the same household and person link everything. A nil report says "no cases in my area this week".
+
+IDSP_ROLES = [("asha", "ASHA", "ആശാ പ്രവർത്തക"), ("jphn", "JPHN", "ജെ.പി.എച്ച്.എൻ"), ("jhi", "JHI", "ജെ.എച്ച്.ഐ"),
+              ("mo", "Medical officer", "മെഡിക്കൽ ഓഫീസർ"), ("other_staff", "Other health staff", "മറ്റ് ആരോഗ്യ ജീവനക്കാർ")]
+IDSP_SYNDROMES = [  # code, English (IHIP Form S), Malayalam
+    ("fever_lt7", "Only fever, less than 7 days", "പനി മാത്രം, 7 ദിവസത്തിൽ താഴെ"),
+    ("fever_ge7", "Only fever, 7 days or more", "പനി മാത്രം, 7 ദിവസമോ അതിൽ കൂടുതലോ"),
+    ("fever_rash", "Fever with rash", "പനിയും ചുണങ്ങും (റാഷ്)"),
+    ("fever_bleed", "Fever with bleeding", "പനിയും രക്തസ്രാവവും"),
+    ("fever_altered", "Fever with altered sensorium (confused or drowsy)", "പനിയും ബോധക്കുറവും / ആശയക്കുഴപ്പവും"),
+    ("cough_fever", "Cough with fever, up to 2 weeks", "പനിയോടു കൂടിയ ചുമ, 2 ആഴ്ച വരെ"),
+    ("cough", "Cough without fever, up to 2 weeks", "പനിയില്ലാത്ത ചുമ, 2 ആഴ്ച വരെ"),
+    ("cough_fever_2w", "Cough with fever, more than 2 weeks", "പനിയോടു കൂടിയ ചുമ, 2 ആഴ്ചയിൽ കൂടുതൽ"),
+    ("cough_2w", "Cough without fever, more than 2 weeks", "പനിയില്ലാത്ത ചുമ, 2 ആഴ്ചയിൽ കൂടുതൽ"),
+    ("lws_blood", "Loose watery stools with blood, under 2 weeks", "രക്തത്തോടു കൂടിയ വയറിളക്കം, 2 ആഴ്ചയിൽ താഴെ"),
+    ("lws", "Loose watery stools without blood, under 2 weeks", "രക്തമില്ലാത്ത വയറിളക്കം, 2 ആഴ്ചയിൽ താഴെ"),
+    ("jaundice", "Jaundice, under 4 weeks", "മഞ്ഞപ്പിത്തം, 4 ആഴ്ചയിൽ താഴെ"),
+    ("afp", "Acute flaccid paralysis (sudden weak or floppy limbs)", "പെട്ടെന്നുള്ള കൈകാൽ തളർച്ച (AFP)"),
+    ("malaria_pv", "Malaria vivax, RDT positive", "മലേറിയ വൈവാക്സ്, RDT പോസിറ്റീവ്"),
+    ("malaria_pf", "Malaria falciparum, RDT positive", "മലേറിയ ഫാൽസിപാരം, RDT പോസിറ്റീവ്"),
+    ("malaria_mix", "Malaria mixed, RDT positive", "മലേറിയ മിക്സഡ്, RDT പോസിറ്റീവ്"),
+    ("animal_bite", "Animal bite", "മൃഗങ്ങളുടെ കടി"),
+    ("snake_bite", "Snake bite", "പാമ്പുകടി"),
+    ("aes", "Acute encephalitis syndrome", "അക്യൂട്ട് എൻസെഫലൈറ്റിസ് സിൻഡ്രോം (മസ്തിഷ്കജ്വരം)"),
+    ("ili", "ARI / influenza-like illness (ILI)", "ശ്വാസകോശ അണുബാധ / ഇൻഫ്ലുവൻസ പോലുള്ള രോഗം (ILI)"),
+    ("sari", "ARI / severe acute respiratory infection (SARI)", "ഗുരുതര ശ്വാസകോശ അണുബാധ (SARI)"),
+    ("unusual", "Other unusual health condition", "മറ്റ് അസാധാരണ ആരോഗ്യ പ്രശ്നം"),
+]
+LWS = "${syndrome}='lws' or ${syndrome}='lws_blood'"
+FEVER = "starts-with(${syndrome}, 'fever')"
+CASE = "${report_type}='case'"
+
+
+def form_idsp_s():
+    s = [
+        q("start", "start"), q("end", "end"), q("today", "today"), q("deviceid", "deviceid"),
+        q("start-geopoint", "gps"),
+        q("csv-external", "persons"),
+        q("note", "intro", "IDSP Form S. Fill one form for each person with an IDSP syndrome, or one nil report a week "
+          "when there are none. Cases you enter here count in the IDSP weekly report straight away. "
+          "(Malayalam text is a machine-assisted translation for accessibility; English is the reference.)",
+          "ഐ.ഡി.എസ്.പി ഫോം എസ്. ഐ.ഡി.എസ്.പി ലക്ഷണങ്ങളുള്ള ഓരോ ആൾക്കും ഒരു ഫോം വീതം; ആരുമില്ലെങ്കിൽ ആഴ്ചയിൽ ഒരു "
+          "'ഇല്ല' റിപ്പോർട്ട്. ഇവിടെ ചേർക്കുന്നവ ഉടൻ തന്നെ ഐ.ഡി.എസ്.പി പ്രതിവാര റിപ്പോർട്ടിൽ ഉൾപ്പെടും. "
+          "(മലയാളം യന്ത്രസഹായത്തോടെയുള്ള വിവർത്തനമാണ്; ഇംഗ്ലീഷ് പാഠമാണ് ആധികാരികം.)"),
+        q("select_one idsp_role", "role", "You are reporting as", "നിങ്ങൾ റിപ്പോർട്ട് ചെയ്യുന്നത്", req="yes",
+          default="${last-saved#role}"),
+        q("select_one report_type", "report_type", "What are you reporting?", "എന്താണ് റിപ്പോർട്ട് ചെയ്യുന്നത്?",
+          req="yes", default="case"),
+        q("begin_group", "nilgrp", "Nil report", "'ഇല്ല' റിപ്പോർട്ട്", rel="${report_type}='nil'", app="field-list"),
+        q("select_one_from_file sites.csv", "nil_site", "Your area", "നിങ്ങളുടെ പ്രദേശം", req="yes",
+          default="${last-saved#nil_site}"),
+        q("select_one nil_week", "nil_week", "For which week?", "ഏത് ആഴ്ചയിലേക്ക്?", req="yes", default="this",
+          app="horizontal-compact"),
+        q("note", "nil_confirm", "By sending this you confirm that you found no one with any IDSP syndrome in your "
+          "area that week.", "ആ ആഴ്ച നിങ്ങളുടെ പ്രദേശത്ത് ഐ.ഡി.എസ്.പി ലക്ഷണങ്ങളുള്ള ആരെയും കണ്ടില്ലെന്ന് ഇത് അയയ്ക്കുന്നതിലൂടെ "
+          "നിങ്ങൾ സ്ഥിരീകരിക്കുന്നു."),
+        q("end_group", "nilgrp"),
+    ]
+    s += hh_scan_block(rel=CASE, save=True)
+    s += [q("calculate", "camp_site", calc="substring-before(${hh_id}, '-')"),
+          q("calculate", "n_members", calc="count(instance('persons')/root/item[hh_id = ${hh_id}])"),
+          q("begin_group", "casegrp", "The case", "രോഗി", rel=CASE)]
+    s += report_person()
+    s += [
+        q("begin_group", "syn", "IDSP syndrome", "ഐ.ഡി.എസ്.പി ലക്ഷണം", app="field-list"),
+        q("select_one s_syndrome", "syndrome", "Syndrome (IHIP Form S)", "ലക്ഷണം (IHIP ഫോം എസ്)", req="yes",
+          hen="Loose stools: 3 or more in 24 hours. Jaundice: yellow eyes or dark yellow urine.",
+          hml="വയറിളക്കം: 24 മണിക്കൂറിൽ 3-ഓ അതിൽ കൂടുതലോ തവണ. മഞ്ഞപ്പിത്തം: കണ്ണിനോ മൂത്രത്തിനോ കടുത്ത മഞ്ഞനിറം."),
+        q("select_one dehydration", "dehydration", "Dehydration", "നിർജ്ജലീകരണം", req="yes", rel=LWS),
+        q("select_one yes_no", "water_contact", "Contact with flood, canal, field or drain water in the 2 weeks before?",
+          "അതിനു മുമ്പുള്ള 2 ആഴ്ചയിൽ വെള്ളപ്പൊക്ക / കനാൽ / പാടം / ഓട വെള്ളവുമായി സമ്പർക്കം ഉണ്ടായോ?", req="yes",
+          rel=FEVER, app="horizontal-compact"),
+        q("select_one outcome", "outcome", "Where is the person now?", "ഇപ്പോൾ ആൾ എവിടെയാണ്?", req="yes"),
+        q("select_one water_src", "water_src", "Drinking water used in the past 2 weeks",
+          "കഴിഞ്ഞ 2 ആഴ്ച ഉപയോഗിച്ച കുടിവെള്ളം", req="yes"),
+        q("select_one yes_no", "sample_taken", "Sample sent to a laboratory?", "ലാബിലേക്ക് സാമ്പിൾ അയച്ചോ?", req="yes",
+          app="horizontal-compact"),
+        q("end_group", "syn"),
+        q("note", "cholera_now", "Severe dehydration: give ORS now, send the person to the PHC today and tell the "
+          "medical officer. This is reported as suspected cholera.",
+          "കടുത്ത നിർജ്ജലീകരണം: ഇപ്പോൾ തന്നെ ഒ.ആർ.എസ് നൽകി ഇന്നുതന്നെ പി.എച്ച്.സി-യിലേക്ക് അയയ്ക്കുക, മെഡിക്കൽ ഓഫീസറെ "
+          "അറിയിക്കുക. ഇത് കോളറ സംശയമായി റിപ്പോർട്ട് ചെയ്യും.", rel="${dehydration}='severe'"),
+    ]
+    s += report_impact()
+    s += [q("end_group", "casegrp")]
+    ch = report_choices()
+    ch += [c("idsp_role", n, en, ml) for n, en, ml in IDSP_ROLES]
+    ch += [c("report_type", "case", "A case", "ഒരു രോഗി"),
+           c("report_type", "nil", "Nil report: no cases this week", "'ഇല്ല' റിപ്പോർട്ട്: ഈ ആഴ്ച രോഗികളില്ല")]
+    ch += [c("nil_week", "this", "This week", "ഈ ആഴ്ച"), c("nil_week", "last", "Last week", "കഴിഞ്ഞ ആഴ്ച")]
+    ch += [c("s_syndrome", n, en, ml) for n, en, ml in IDSP_SYNDROMES]
+    ch += [c("dehydration", n, en, ml) for n, en, ml in [
+        ("none", "No dehydration", "നിർജ്ജലീകരണമില്ല"),
+        ("some", "Some: restless, thirsty, sunken eyes", "ചെറിയ തോതിൽ: അസ്വസ്ഥത, ദാഹം, കുഴിഞ്ഞ കണ്ണുകൾ"),
+        ("severe", "Severe: very sleepy, cannot drink, skin pinch goes back very slowly",
+         "കടുത്തത്: കടുത്ത മയക്കം, കുടിക്കാനാകുന്നില്ല, നുള്ളിയ തൊലി വളരെ സാവധാനം മാത്രം പഴയപടിയാകുന്നു")]]
+    ch += [c("outcome", n, en, ml) for n, en, ml in [
+        ("home", "At home", "വീട്ടിൽ"), ("referred", "Referred to PHC or hospital", "പി.എച്ച്.സി / ആശുപത്രിയിലേക്ക് റഫർ ചെയ്തു"),
+        ("admitted", "Admitted to hospital", "ആശുപത്രിയിൽ പ്രവേശിപ്പിച്ചു"), ("died", "Died", "മരിച്ചു")]]
+    ch += [c("water_src", n, en, ml) for n, en, ml in [
+        ("own_well", "Own well", "സ്വന്തം കിണർ"), ("shared_well", "Shared or public well", "പൊതു / പങ്കിട്ട കിണർ"),
+        ("tap", "Tap (KWA / piped)", "പൈപ്പ് വെള്ളം (KWA)"), ("tanker", "Tanker", "ടാങ്കർ വെള്ളം"),
+        ("borewell", "Borewell", "കുഴൽക്കിണർ"), ("packaged", "Bottled or can water", "കുപ്പി / കാൻ വെള്ളം"),
+        ("other", "Other", "മറ്റുള്ളവ")]]
+    settings = _settings("obs_idsp_s", "IDSP Form S (syndromic)",
+                         "if(${report_type}='nil', concat('Nil · ', ${nil_site}), "
+                         "concat(${hh_id}, ' · ', ${syndrome}, ' · ', ${today}))")
+    settings["version"] = "2026102601"
+    return s, ch, settings, PERSON_ENTITY
+
+
 FORMS = {
     "obs_camp_registration": form_registration,
     "obs_camp_station": form_station,
@@ -1070,6 +1184,7 @@ FORMS = {
     "obs_report_diarrhoea": form_report_diarrhoea,
     "obs_report_health": form_report_health,
     "obs_report_onehealth": form_report_onehealth,
+    "obs_idsp_s": form_idsp_s,
 }
 
 if __name__ == "__main__":

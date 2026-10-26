@@ -240,8 +240,12 @@ def main(reset=False):
         if x < 0.5:
             a.status, a.reviewed_by = ("sent" if x < 0.35 else "approved"), "doctor"
     db.commit()
+    from tools import seed_idsp_demo
+    idsp_result = seed_idsp_demo.add(db, rnd, today)
     print(f"Demo data loaded: {person_no} people, {sample_no} water samples, {len(DEMO_SITES)} sites.")
-    print(f"Demo logins (password '{DEMO_PASSWORD}'): " + ", ".join(u for u, *_ in DEMO_USERS))
+    print("IDSP module:", idsp_result)
+    print(f"Demo logins (password '{DEMO_PASSWORD}'): " + ", ".join(u for u, *_ in DEMO_USERS) +
+          ", jphn, mo, dso, lab")
     db.close()
 
 

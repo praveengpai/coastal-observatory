@@ -14,8 +14,9 @@ from .db import get_db
 from .models import User
 
 ITERATIONS = 310_000
-ROLES = ("admin", "coordinator", "scientist", "doctor", "asha", "ward")
-PII_ROLES = {"admin", "coordinator", "doctor", "asha"}
+ROLES = ("admin", "coordinator", "scientist", "doctor", "asha", "ward",
+         "jphn", "mo", "dso", "lab")          # IDSP: JPHN / JHI, PHC medical officer, District Surveillance Officer, lab
+PII_ROLES = {"admin", "coordinator", "doctor", "asha", "jphn", "mo"}
 MAX_FAILED = 5
 LOCK_MINUTES = 15
 

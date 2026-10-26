@@ -2,7 +2,7 @@
 import csv
 import io
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -11,14 +11,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from . import analytics, config, reports, rules, sources, sync_odk, translate, weather
+from . import analytics, config, idsp, reports, rules, sources, sync_odk, translate, weather
 from .db import SessionLocal, get_db, init_db
-from .models import (Advisory, AuditLog, Decision, HomeVisit, Household, HouseholdSurvey, LabResult, Person,
-                     PersonPII, Registration, Report, ReportForm, Site, StationRecord, SyncState, User, WaterSample)
+from .models import (Advisory, AuditLog, Decision, HomeVisit, Household, HouseholdSurvey, IdspAlert, IdspCase,
+                     LabResult, Person, PersonPII, Registration, Report, ReportForm, Site, StationRecord, SyncState,
+                     User, WaterSample)
 from .security import ROLES, Principal, authenticate, current_user, hash_password, make_token, require
 
 ALL = ROLES
-ANALYSTS = ("admin", "coordinator", "scientist", "doctor")
+ANALYSTS = ("admin", "coordinator", "scientist", "doctor", "mo", "dso")
+IDSP_VIEW = ("admin", "coordinator", "scientist", "doctor", "asha", "jphn", "mo", "dso", "lab")
+IDSP_VERIFY = ("admin", "asha", "jphn", "mo")          # health staff confirm community signals
+IDSP_ALERT = ("admin", "jphn", "mo", "dso")
+IDSP_EXPORT = ("admin", "coordinator", "mo", "dso")
 MANAGERS = ("admin", "coordinator")
 
 @asynccontextmanager
@@ -595,6 +600,185 @@ def audit(limit: int = Query(200, le=2000), p: Principal = Depends(require("admi
     rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
     return [{"at": a.at.isoformat() if a.at else None, "user": a.username, "method": a.method, "path": a.path,
              "status": a.status, "ip": a.ip} for a in rows]
+
+
+# ------------------------------------------------------------------ IDSP module
+
+def _week(week: str | None) -> date:
+    """The IDSP week (Monday to Sunday) holding `week`, or the last complete week."""
+    if week:
+        try:
+            return idsp.week_start(date.fromisoformat(week))
+        except ValueError:
+            raise HTTPException(422, "week must be a date, YYYY-MM-DD.")
+    return idsp.week_start(date.today()) - timedelta(days=7)
+
+
+def _idsp_case(db: Session, p: Principal, cid: int) -> IdspCase:
+    c = db.get(IdspCase, cid)
+    if not c or not p.can_see_site(c.site_code):
+        raise HTTPException(404, "No such case.")
+    return c
+
+
+@app.get("/api/idsp/meta")
+def idsp_meta(p: Principal = Depends(require(*IDSP_VIEW))):
+    return idsp.meta()
+
+
+@app.get("/api/idsp/overview")
+def idsp_overview(week: str | None = None, include_test: bool = False, p: Principal = Depends(require(*IDSP_VIEW)),
+                  db: Session = Depends(get_db)):
+    return idsp.overview(db, sites_for(db, p, include_test), _week(week))
+
+
+@app.get("/api/idsp/queue")
+def idsp_queue(include_test: bool = False, p: Principal = Depends(require(*IDSP_VIEW)), db: Session = Depends(get_db)):
+    if p.role in ("scientist", "lab"):
+        raise HTTPException(403, "Your role cannot open the verification queue.")
+    return idsp.queue(db, sites_for(db, p, include_test), p.pii)
+
+
+@app.get("/api/idsp/cases")
+def idsp_cases(week: str | None = None, status: str | None = None, include_test: bool = False,
+               p: Principal = Depends(require(*IDSP_VIEW)), db: Session = Depends(get_db)):
+    if status and status not in idsp.STATUS_LABEL:
+        raise HTTPException(422, "Unknown status.")
+    return idsp.cases(db, sites_for(db, p, include_test), p.pii, _week(week) if week else None, status)
+
+
+class VerifyBody(BaseModel):
+    outcome: str
+    note: str | None = Field(default=None, max_length=300)
+    duplicate_of: int | None = None
+
+
+@app.post("/api/idsp/cases/{cid}/verify")
+def idsp_verify(cid: int, body: VerifyBody, p: Principal = Depends(require(*IDSP_VERIFY)),
+                db: Session = Depends(get_db)):
+    c = _idsp_case(db, p, cid)
+    if body.duplicate_of:
+        _idsp_case(db, p, body.duplicate_of)
+    try:
+        idsp.verify(db, c, body.outcome, p.username, p.role, body.note, body.duplicate_of)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"ok": True}
+
+
+class PresumptiveBody(BaseModel):
+    diagnosis: str
+
+
+@app.post("/api/idsp/cases/{cid}/presumptive")
+def idsp_presumptive(cid: int, body: PresumptiveBody, p: Principal = Depends(require("admin", "mo")),
+                     db: Session = Depends(get_db)):
+    try:
+        idsp.set_presumptive(db, _idsp_case(db, p, cid), body.diagnosis, p.username)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"ok": True}
+
+
+class LabBody(BaseModel):
+    test: str
+    result: str
+    sample_on: date | None = None
+    sample_id: str | None = Field(default=None, max_length=40)
+
+
+@app.post("/api/idsp/cases/{cid}/lab")
+def idsp_lab(cid: int, body: LabBody, p: Principal = Depends(require("admin", "mo", "lab")),
+             db: Session = Depends(get_db)):
+    c = _idsp_case(db, p, cid)
+    if c.status != "verified":
+        raise HTTPException(409, "Verify the case before adding a laboratory result.")
+    try:
+        idsp.set_lab(db, c, body.test, body.result, p.username, body.sample_on, body.sample_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"ok": True}
+
+
+@app.get("/api/idsp/weekly")
+def idsp_weekly(week: str | None = None, include_test: bool = False, p: Principal = Depends(require(*IDSP_VIEW)),
+                db: Session = Depends(get_db)):
+    return idsp.weekly(db, sites_for(db, p, include_test), _week(week))
+
+
+def _csv(rows, filename):
+    out = io.StringIO()
+    csv.writer(out).writerows(rows)
+    return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.get("/api/idsp/weekly.csv")
+def idsp_weekly_csv(week: str | None = None, include_test: bool = False, p: Principal = Depends(require(*IDSP_EXPORT)),
+                    db: Session = Depends(get_db)):
+    data = idsp.weekly(db, sites_for(db, p, include_test), _week(week))
+    return _csv(idsp.weekly_csv_rows(data), f"idsp-form-s-p-{data['week_start']}.csv")
+
+
+@app.get("/api/idsp/linelist.csv")
+def idsp_linelist_csv(week: str | None = None, include_test: bool = False,
+                      p: Principal = Depends(require(*IDSP_EXPORT)), db: Session = Depends(get_db)):
+    ws = _week(week)
+    rows = idsp.cases(db, sites_for(db, p, include_test), p.pii, ws, "verified")
+    return _csv(idsp.linelist_csv_rows(rows, p.pii), f"idsp-line-list-{ws.isoformat()}.csv")
+
+
+@app.get("/api/idsp/alerts")
+def idsp_alerts(include_test: bool = False, p: Principal = Depends(require(*IDSP_VIEW)), db: Session = Depends(get_db)):
+    return idsp.alert_rows(db, sites_for(db, p, include_test))
+
+
+class AlertAction(BaseModel):
+    action: str
+    note: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/idsp/alerts/{aid}")
+def idsp_alert_act(aid: int, body: AlertAction, p: Principal = Depends(require(*IDSP_ALERT)),
+                   db: Session = Depends(get_db)):
+    a = db.get(IdspAlert, aid)
+    if not a or not p.can_see_site(a.site_code):
+        raise HTTPException(404, "No such alert.")
+    try:
+        idsp.act_on_alert(db, a, body.action, p.username, body.note)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/idsp/run")
+def idsp_run(include_test: bool = False, p: Principal = Depends(require("admin", "coordinator", "mo", "dso")),
+             db: Session = Depends(get_db)):
+    """Capture new community signals and check the alert thresholds now (also runs every hour)."""
+    captured = idsp.capture_signals(db)
+    return {"signals_captured": captured, **idsp.generate_alerts(db, sites_for(db, p, include_test))}
+
+
+@app.get("/api/idsp/thresholds")
+def idsp_thresholds(p: Principal = Depends(require(*IDSP_VIEW)), db: Session = Depends(get_db)):
+    return idsp.thresholds(db)
+
+
+@app.post("/api/idsp/thresholds")
+def idsp_set_thresholds(body: dict, p: Principal = Depends(require("admin", "dso")), db: Session = Depends(get_db)):
+    clean = {}
+    for k, v in body.items():
+        if k not in idsp.TH_DEFAULT:
+            raise HTTPException(422, f"Unknown setting: {k}")
+        try:
+            num = float(v)
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"{k} must be a number.")
+        if num <= 0 or num > 10000:
+            raise HTTPException(422, f"{k} is out of range.")
+        clean[k] = int(num) if num == int(num) else num
+    idsp.set_thresholds(db, clean)
+    return {"ok": True, "thresholds": idsp.thresholds(db)}
 
 
 # ------------------------------------------------------------------ dashboard

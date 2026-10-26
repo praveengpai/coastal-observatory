@@ -77,4 +77,6 @@ def run_sync(db: Session) -> dict:
         db.merge(state)
         db.commit()
         counts[form_id] = n
+    from . import idsp
+    idsp.capture_signals(db)
     return counts

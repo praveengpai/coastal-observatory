@@ -189,6 +189,53 @@ Generated from the ODK forms in `forms/dist`. Field names here are the column na
 | `chlorine_given` | integer | Chlorine tablets given | selected(${advice}, 'chlorinate') |  |
 | `notes` | text | Notes |  |  |
 
+## obs_idsp_s
+
+| Field | Type | Question (English) | Shown when | Calculation |
+| --- | --- | --- | --- | --- |
+| `gps` | start-geopoint |  |  |  |
+| `persons` | csv-external |  |  |  |
+| `role` | select_one idsp_role | You are reporting as |  |  |
+| `report_type` | select_one report_type | What are you reporting? |  |  |
+| `nil_site` | select_one_from_file sites.csv | Your area |  |  |
+| `nil_week` | select_one nil_week | For which week? |  |  |
+| `hh_method` | select_one id_method | Household ID: scan or type? |  |  |
+| `hh_scan` | barcode | Scan the household sticker | ${hh_method}='scan' |  |
+| `hh_type` | text | Type the household ID | ${hh_method}='type' |  |
+| `hh_id` | calculate |  |  | if(${hh_method}='scan', ${hh_scan}, ${hh_type}) |
+| `camp_site` | calculate |  |  | substring-before(${hh_id}, '-') |
+| `n_members` | calculate |  |  | count(instance('persons')/root/item[hh_id = ${hh_id}]) |
+| `consent_named` | select_one yes_no | Does the family agree to share this report, with the person's name, with the health team (ASHA and doctor)? |  |  |
+| `in_list` | select_one in_list | Is the person on this household's list? | ${n_members} > 0 |  |
+| `person` | select_one_from_file persons.csv | Choose the person | ${n_members} > 0 and ${in_list}='yes' |  |
+| `in_list_eff` | calculate |  |  | if(${n_members} = 0, 'no', ${in_list}) |
+| `new_name` | text | Name |  |  |
+| `new_age` | integer | Age (years) |  |  |
+| `new_sex` | select_one sex | Sex |  |  |
+| `new_card` | barcode | If they have a person ID card from a camp, scan it (optional) |  |  |
+| `new_pid` | calculate |  |  | if(string-length(${new_card}) > 0, ${new_card}, once(concat('OBS-N-', substr(uuid(), 0, 6)))) |
+| `anon_age` | integer | Age (years) |  |  |
+| `anon_sex` | select_one sex | Sex |  |  |
+| `person_id` | calculate |  |  | if(${consent_named}!='yes', '', if(${in_list_eff}='yes', instance('persons')/root/item[name = ${person}]/person_id, ${new_pid})) |
+| `p_age` | calculate |  |  | if(${consent_named}!='yes', ${anon_age}, if(${in_list_eff}='yes', instance('persons')/root/item[name = ${person}]/age, ${new_age})) |
+| `p_sex` | calculate |  |  | if(${consent_named}!='yes', ${anon_sex}, if(${in_list_eff}='yes', instance('persons')/root/item[name = ${person}]/sex, ${new_sex})) |
+| `syndrome` | select_one s_syndrome | Syndrome (IHIP Form S) |  |  |
+| `dehydration` | select_one dehydration | Dehydration | ${syndrome}='lws' or ${syndrome}='lws_blood' |  |
+| `water_contact` | select_one yes_no | Contact with flood, canal, field or drain water in the 2 weeks before? | starts-with(${syndrome}, 'fever') |  |
+| `outcome` | select_one outcome | Where is the person now? |  |  |
+| `water_src` | select_one water_src | Drinking water used in the past 2 weeks |  |  |
+| `sample_taken` | select_one yes_no | Sample sent to a laboratory? |  |  |
+| `onset` | date | When did it start? |  |  |
+| `still_ill` | select_one yes_no | Still ill today? |  |  |
+| `days_ill` | integer | Days ill so far |  |  |
+| `activity` | select_one activity | What does this person usually do? |  |  |
+| `work_days` | integer | Days unable to work (including home duties) | selected(${activity}, 'daily_wage') or selected(${activity}, 'fishing') or selected(${activity}, 'salaried') or selected(${activity}, 'self_emp') or selected(${activity}, 'home') |  |
+| `school_days` | integer | School or college days missed | selected(${activity}, 'student') |  |
+| `carer_days` | integer | Days a family member stayed away from work to look after them |  |  |
+| `care` | select_one care | Treatment taken |  |  |
+| `cost_rs` | integer | Money spent on treatment and travel (₹), if known |  |  |
+| `notes` | text | Notes |  |  |
+
 ## obs_report_diarrhoea
 
 | Field | Type | Question (English) | Shown when | Calculation |

@@ -325,3 +325,143 @@ def test_sync_skips_unpublished_report_forms():
     db.close()
     assert counts["obs_report_onehealth"] == "not published" and counts["obs_camp_registration"] == 0
     assert "obs_report_diarrhoea" in counts
+
+
+# ------------------------------------------------------------------ IDSP module
+
+def _s_form(**kw):
+    base = {"__id": f"uuid:idsp-{kw.pop('uid')}", "__system": {"submissionDate": "2026-11-14T10:00:00Z", "reviewState": None},
+            "role": "asha", "report_type": "case", "consent_named": "no", "in_list_eff": "yes", "person_id": "",
+            "outcome": "home", "water_src": "own_well"}
+    base.update(kw)
+    return base
+
+
+def test_idsp_signal_counts_only_after_verification(client):
+    from datetime import date, timedelta
+    from app import idsp
+    from app.db import SessionLocal
+    from app.models import IdspCase
+    db = SessionLocal()
+    today = date.today()
+    day = (today - timedelta(days=1)).isoformat()
+    ws = idsp.week_start(today - timedelta(days=1))
+    sync_odk.ingest(db, "obs_report_diarrhoea", {
+        "__id": "uuid:sig-1", "__system": {"submissionDate": "2026-11-14T10:00:00Z", "reviewState": None},
+        "today": day, "role": "volunteer", "hh_id": "DF1-090", "camp_site": "DF1", "consent_named": "no",
+        "p_age": 30, "p_sex": "f", "condition": "diarrhoea", "danger": "no", "impact": {"onset": day, "days_ill": 1}})
+    db.commit()
+    idsp.capture_signals(db)
+    c = db.query(IdspCase).filter(IdspCase.hh_id == "DF1-090").one()
+    assert c.status == "unverified" and c.first_source == "community"
+    before = idsp.weekly(db, ["DF1"], ws)["verified"]
+    # the ASHA files Form S for the same woman: one case, now verified, both sources kept
+    sync_odk.ingest(db, "obs_idsp_s", _s_form(uid="1", today=today.isoformat(), hh_id="DF1-090", camp_site="DF1",
+                                               p_age=31, p_sex="f", syndrome="lws", dehydration="none", onset=day))
+    db.commit()
+    rows = db.query(IdspCase).filter(IdspCase.hh_id == "DF1-090").all()
+    assert len(rows) == 1 and rows[0].status == "verified" and set(rows[0].sources.split()) == {"community", "idsp"}
+    assert idsp.weekly(db, ["DF1"], ws)["verified"] == before + 1
+    # capture again: nothing new (idempotent)
+    idsp.capture_signals(db)
+    assert db.query(IdspCase).filter(IdspCase.hh_id == "DF1-090").count() == 1
+    db.close()
+
+
+def test_idsp_severe_dehydration_is_suspected_cholera(client):
+    from datetime import date
+    from app.db import SessionLocal
+    from app.models import IdspCase
+    db = SessionLocal()
+    sync_odk.ingest(db, "obs_idsp_s", _s_form(uid="2", today=date.today().isoformat(), hh_id="DF1-091",
+                                               camp_site="DF1", p_age=40, p_sex="m", syndrome="lws",
+                                               dehydration="severe"))
+    db.commit()
+    c = db.query(IdspCase).filter(IdspCase.hh_id == "DF1-091").one()
+    assert c.suspect == "cholera" and c.urgent and c.status == "verified"
+    db.close()
+
+
+def test_idsp_nil_report_counts_for_completeness(client):
+    from datetime import date
+    from app import idsp
+    from app.db import SessionLocal
+    db = SessionLocal()
+    sync_odk.ingest(db, "obs_idsp_s", {"__id": "uuid:nil-1", "__system": {"submissionDate": "x", "reviewState": None},
+                                       "today": date.today().isoformat(), "role": "asha", "report_type": "nil",
+                                       "nil_site": "DMC", "nil_week": "this"})
+    db.commit()
+    w = idsp.weekly(db, ["DMC"], idsp.week_start(date.today()))
+    assert w["sites"][0]["state"] in ("Nil report", "Reported", "Reported, no cases")
+    db.close()
+
+
+def test_idsp_role_permissions(client):
+    from app.db import SessionLocal
+    from app.models import User
+    from app.security import make_token
+    db = SessionLocal()
+    ward = {"Authorization": f"Bearer {make_token(db.get(User, 'ward'))}"}     # the lockout test locked its password
+    db.close()
+    sci, dso, asha, lab = (login(client, u) for u in ("scientist", "dso", "asha", "lab"))
+    assert client.get("/api/idsp/overview", headers=ward).status_code == 403
+    assert client.get("/api/idsp/queue", headers=sci).status_code == 403
+    assert client.get("/api/idsp/queue", headers=lab).status_code == 403
+    q = client.get("/api/idsp/queue", headers=asha).json()
+    assert q and any(x["name"] for x in q)                       # ASHA sees names
+    assert all(x["name"] is None for x in client.get("/api/idsp/queue", headers=dso).json())  # DSO does not
+    case = q[0]["id"]
+    assert client.post(f"/api/idsp/cases/{case}/verify", json={"outcome": "verified"}, headers=dso).status_code == 403
+    assert client.post(f"/api/idsp/cases/{case}/lab", json={"test": "cholera_rdt", "result": "negative"},
+                       headers=lab).status_code in (404, 409)   # unverified (or outside the lab's sites): refused
+    assert client.post("/api/idsp/thresholds", json={"add_cluster_n": 4}, headers=asha).status_code == 403
+    assert client.post(f"/api/idsp/cases/{case}/verify", json={"outcome": "verified", "note": "Seen"},
+                       headers=asha).status_code == 200
+    assert client.post(f"/api/idsp/cases/{case}/verify", json={"outcome": "bogus"}, headers=asha).status_code == 422
+
+
+def test_idsp_alerts_need_verified_cases(client):
+    from datetime import date, timedelta
+    from app import idsp
+    from app.db import SessionLocal
+    from app.models import Household, IdspAlert, IdspCase
+    db = SessionLocal()
+    today = date.today()
+    for i in range(4):
+        hh = f"DF1-1{i:02d}"
+        db.add(Household(hh_id=hh, site_code="DF1", lat=10.10 + i * 0.0003, lon=76.50))
+        idsp.add_record(db, "community", f"community:test-{i}", site="DF1", hh_id=hh, person_id=None, age=20 + i,
+                        sex="m", syndrome="jaundice", reported_on=today - timedelta(days=1))
+    db.commit()
+    idsp.generate_alerts(db, ["DF1"], today)
+    assert not db.query(IdspAlert).filter(IdspAlert.kind == "jaundice_cluster", IdspAlert.site_code == "DF1").count()
+    for c in db.query(IdspCase).filter(IdspCase.hh_id.like("DF1-1%"), IdspCase.syndrome == "jaundice").all():
+        idsp.verify(db, c, "verified", "asha", "asha")
+    idsp.generate_alerts(db, ["DF1"], today)
+    a = db.query(IdspAlert).filter(IdspAlert.kind == "jaundice_cluster", IdspAlert.site_code == "DF1").one()
+    assert len(a.case_ids.split()) == 4
+    db.close()
+    h = login(client, "mo")
+    assert client.post(f"/api/idsp/alerts/{a.id}", json={"action": "close"}, headers=h).status_code == 422
+    assert client.post(f"/api/idsp/alerts/{a.id}", json={"action": "close", "note": "Visited; wells chlorinated"},
+                       headers=h).status_code == 200
+
+
+def test_idsp_seeded_demo_story(client):
+    h = login(client, "dso")
+    alerts = client.get("/api/idsp/alerts", headers=h).json()
+    kinds = {a["kind"] for a in alerts if a["status"] != "closed"}
+    assert {"add_cluster", "immediate", "lepto"} <= kinds
+    ov = client.get("/api/idsp/overview", headers=h).json()
+    assert ov["community"]["verified_90d"] > 0 and len(ov["trend"]) == 12
+    wk = client.get("/api/idsp/weekly", headers=h).json()
+    assert [r["code"] for r in wk["form_s"]][:2] == ["fever_lt7", "fever_ge7"]
+
+
+def test_idsp_exports(client):
+    mo, dso = login(client, "mo"), login(client, "dso")
+    head = client.get("/api/idsp/weekly.csv", headers=dso).text.splitlines()[0]
+    assert head.startswith("form,code,syndrome_or_disease,male_le5,male_gt5,female_le5,female_gt5")
+    assert "name" in client.get("/api/idsp/linelist.csv", headers=mo).text.splitlines()[0].split(",")
+    assert "name" not in client.get("/api/idsp/linelist.csv", headers=dso).text.splitlines()[0].split(",")
+    assert client.get("/api/idsp/linelist.csv", headers=login(client, "asha")).status_code == 403

@@ -2,11 +2,11 @@
 
     python -m tools.jobs sync      # pull new ODK submissions (every 15 minutes)
     python -m tools.jobs weather   # refresh the 7-day forecast, and IMD once access is set up (twice a day)
-    python -m tools.jobs rules     # draft advisories and ward decisions (hourly)
+    python -m tools.jobs rules     # draft advisories and ward decisions; IDSP signals and alerts (hourly)
 """
 import sys
 
-from app import analytics, config, imd, rules, sources
+from app import analytics, config, idsp, imd, rules, sources
 from app.db import SessionLocal, init_db
 
 if __name__ == "__main__":
@@ -26,6 +26,8 @@ if __name__ == "__main__":
             except imd.NotReady as exc:
                 print(exc)
     elif job == "rules":
-        print(rules.generate(db, [s.code for s in analytics.site_codes(db)]))
+        codes = [s.code for s in analytics.site_codes(db)]
+        print(rules.generate(db, codes))
+        print("IDSP signals:", idsp.capture_signals(db), idsp.generate_alerts(db, codes))
     else:
         raise SystemExit(__doc__)

@@ -16,12 +16,14 @@ from app.models import ReportForm
 
 ROOT = Path(__file__).resolve().parent.parent
 ORDER = ["obs_camp_registration", "obs_camp_station", "obs_household_visit", "obs_water_sample",
-         "obs_report_diarrhoea", "obs_report_health", "obs_report_onehealth"]
+         "obs_report_diarrhoea", "obs_report_health", "obs_report_onehealth", "obs_idsp_s"]
 FIELD, WARD, TRAINING, NIO = "Field team (ASHA / volunteer)", "Ward members", "Training phone", "NIO water sampling"
-ACCESS = {  # report forms only; the camp forms keep the access set up by setup_central
+IDSP = "IDSP staff (ASHA / JPHN / MO)"
+ACCESS = {  # report and IDSP forms; the camp forms keep the access set up by setup_central
     "obs_report_diarrhoea": [FIELD, WARD, TRAINING],
     "obs_report_health": [FIELD, WARD, TRAINING],
     "obs_report_onehealth": [FIELD, WARD, NIO, TRAINING],
+    "obs_idsp_s": [IDSP, TRAINING],          # IDSP Form S: health staff only, never volunteers
 }
 
 
@@ -69,11 +71,13 @@ def main():
     reports.ensure_defaults(db)
     for form_id, names in ACCESS.items():
         f = db.get(ReportForm, form_id)
-        f.phone_groups = ", ".join(names)
+        if f:
+            f.phone_groups = ", ".join(names)
     db.commit()
     db.close()
     print("Done. Phones get the new forms when they next refresh (ODK Collect: Download form).")
     print("Ward members' phone QR: ODK Central → this project → App Users → Ward members.")
+    print(f"IDSP staff phones: ODK Central → this project → App Users → {IDSP}.")
 
 
 if __name__ == "__main__":

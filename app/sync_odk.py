@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 import requests
 from sqlalchemy.orm import Session
 
-from . import config, reports
+from . import config, idsp, reports
 from .models import (HomeVisit, Household, HouseholdSurvey, LabResult, Person, PersonPII, Registration,
                      ReportForm, Site, StationRecord, SyncState, WaterSample)
 
@@ -189,11 +189,16 @@ def upsert_lab(db: Session, sample_id: str, method: str, **values):
         setattr(row, k, v)
 
 
+def ingest_idsp_s(db: Session, f: dict):
+    idsp.ingest_s_form(db, f, helpers=sys.modules[__name__])
+
+
 INGESTERS = {
     "obs_camp_registration": ingest_registration,
     "obs_camp_station": ingest_station,
     "obs_household_visit": ingest_home_visit,
     "obs_water_sample": ingest_water_sample,
+    idsp.FORM_ID: ingest_idsp_s,
 }
 
 
@@ -299,4 +304,5 @@ def run_sync(db: Session, central: Central | None = None) -> dict:
         db.merge(state)
         db.commit()
         counts[form_id] = n
+    idsp.capture_signals(db)      # IDSP-relevant parts of everyone else's records become signals to verify
     return counts

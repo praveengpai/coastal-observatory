@@ -32,7 +32,7 @@ CSIR-NIO × MAGICS / CEDAC Aquadip© project and the longer-term Observatory.
 | `app/` | API, database models, ODK sync, analytics, rules |
 | `web/` | Dashboard (plain HTML, CSS and JavaScript; no external libraries or fonts) |
 | `tools/` | QR stickers, demo data, site publishing, user creation, scheduled jobs, data dictionary |
-| `tests/` | 45 automated tests (pass on SQLite and PostgreSQL 16) |
+| `tests/` | 52 automated tests (pass on SQLite and PostgreSQL 16) |
 | `deploy/`, `Dockerfile`, `docker-compose.yml` | Production deployment for the NIO server |
 | `docs/` | Deployment, security and audit notes, field guide, data dictionary |
 
@@ -47,11 +47,29 @@ CSIR-NIO × MAGICS / CEDAC Aquadip© project and the longer-term Observatory.
 | `obs_report_diarrhoea` | ASHAs, volunteers, ward members | Scan the door sticker, pick or add the person, report diarrhoea and days lost |
 | `obs_report_health` | ASHAs, volunteers, ward members | Same, for other illness (water-related or not) |
 | `obs_report_onehealth` | Anyone in the field | Sick or dead animals, dead fish, rats, mosquito breeding, flooding, water changes |
+| `obs_idsp_s` | ASHAs, JPHNs, medical officers | IDSP Form S: one person with an IHIP syndrome, or a weekly nil report |
 
 Camp registration adds each person to a **household list on every phone** (an ODK entity list), so the
 report forms can show "who in this house is ill?" offline. A person added in a report joins the list too.
 Admins can add more report forms from the Admin tab (start from `forms/dist/report_form_template.xlsx`)
 and choose which dashboard roles see each form's reports.
+
+## IDSP module
+
+A separate **IDSP surveillance** tab for the Integrated Disease Surveillance Programme team, on the same
+database (details in [docs/IDSP_MODULE.md](docs/IDSP_MODULE.md)):
+
+- **IDSP Form S** (`obs_idsp_s`) for ASHAs, JPHNs and medical officers: IHIP Form S syndromes, nil reports,
+  household sticker, GPS, water source and days lost. Entries count as verified.
+- **Community signals:** illness reported by volunteers, ward members and camp doctors is captured
+  automatically, linked to the same episode, and waits for an IDSP worker to confirm it. Unverified signals
+  never enter IDSP counts, exports or outbreak alerts.
+- **Forms S, P and L** in the IHIP layout (male and female, up to 5 and over 5 years), reporting completeness
+  with nil reports, CSV export of the weekly form and the line list.
+- **Alerts** with a named owner and closure: diarrhoea and jaundice clusters (500 m), suspected cholera and
+  bloody diarrhoea under 5, admissions and deaths, a leptospirosis signal, contaminated water next to
+  water-borne illness, and rises above the ward's own baseline. The District Surveillance Officer sets the thresholds.
+- **Roles:** `jphn`, `mo` (medical officer), `dso` (no names), `lab`. Demo data: `python -m tools.seed_idsp_demo`.
 
 ## Workdays lost
 
@@ -77,7 +95,8 @@ python -m tools.seed_demo --reset          # dummy data; refuses to run in produ
 uvicorn app.main:app --port 8000           # open http://localhost:8000
 ```
 
-Demo logins: `admin`, `coordinator`, `scientist`, `doctor`, `asha`, `ward`; password `demo-password-2026`.
+Demo logins: `admin`, `coordinator`, `scientist`, `doctor`, `asha`, `ward`, `jphn`, `mo`, `dso`, `lab`;
+password `demo-password-2026`.
 
 ## Common tasks
 
@@ -103,5 +122,9 @@ python -m pytest -q tests                          # run the tests
 | doctor | Master dashboard, field tasks, approves or rejects every advisory |
 | asha | Tasks for their own sites with names and phones, approved messages to send |
 | ward | Decisions for their wards, risk summary, counts of vulnerable elders (no names) |
+| jphn | IDSP tab: verifies signals (escalations come here), acts on alerts; names shown |
+| mo | IDSP tab: verifies, enters Form P and lab results, exports; master dashboard; names shown |
+| dso | IDSP tab: alerts, thresholds, weekly forms and exports; master dashboard; no names |
+| lab | IDSP tab: enters laboratory results for verified cases; no names |
 
 Users can be restricted to a list of site codes.
