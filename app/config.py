@@ -11,6 +11,7 @@ DATABASE_URL = _env("OBS_DATABASE_URL", "sqlite:///./observatory.db")
 SECRET_KEY = _env("OBS_SECRET_KEY", "change-me-in-production-at-least-32-characters")
 TOKEN_HOURS = _env("OBS_TOKEN_HOURS", "8", int)
 ENVIRONMENT = _env("OBS_ENVIRONMENT", "development")  # development | staging | production
+DEMO_MODE = _env("OBS_DEMO_MODE", "") == "1"         # public demo with invented data: shows a banner
 
 FORM_SERVER = _env("OBS_FORM_SERVER", "odk")   # odk (ODK Central) | kobo (KoboToolbox)
 

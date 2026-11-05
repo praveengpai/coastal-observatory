@@ -6,6 +6,7 @@ tests the sync path. Refuses to run when OBS_ENVIRONMENT=production.
     python -m tools.seed_demo            # adds demo data
     python -m tools.seed_demo --reset    # wipes the database first
 """
+import os
 import random
 import sys
 import uuid
@@ -33,7 +34,7 @@ DEMO_USERS = [  # username, name, role, sites
     ("asha", "Demo ASHA worker", "asha", "DC2 DMA"),
     ("ward", "Demo ward member", "ward", "DC2 DC1"),
 ]
-DEMO_PASSWORD = "demo-password-2026"
+DEMO_PASSWORD = os.environ.get("OBS_DEMO_PASSWORD", "demo-password-2026")
 FIRST = ["Lakshmi", "Mary", "Fathima", "Sreedevi", "Thomas", "Abdul", "Rajan", "Joseph", "Leela", "Ammini",
          "Kunjumon", "Saramma", "Vasu", "Khadeeja", "Philomina", "Gopalan", "Anitha", "Biju", "Reshma", "Shaji"]
 LAST = ["K", "P", "M", "V", "T", "A", "S", "R", "N", "J"]

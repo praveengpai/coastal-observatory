@@ -1,4 +1,5 @@
 [hidden]{display:none!important}
+.demo-banner{margin:0;padding:10px 16px;background:#F6D9A8;color:#12262E;font:600 14px/1.4 system-ui,sans-serif;text-align:center}
 :root{--ink:#12262E;--ink2:#2E4248;--mut:#4A5D63;--line:#DCE5E6;--bg:#F4F7F7;--card:#FFFFFF;--teal:#0E7C86;--teal-d:#0B6770;--tint:#E7F3F2;--rust:#B8461A;--rust-d:#A33E17;--low:#D7ECEA;--watch:#F6D9A8;--high:#F2B193;--none:#EEF2F2}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Segoe UI",Roboto,"Noto Sans","Noto Sans Malayalam",system-ui,sans-serif}

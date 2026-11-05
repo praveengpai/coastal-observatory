@@ -945,6 +945,7 @@
   });
 
   // ---------------------------------------------------------------- boot
+  fetch("/api/health").then((r) => r.json()).then((h) => { if (h.demo) $("#demo-banner").hidden = false; }).catch(() => {});
   (async function boot() {
     try { S.token = sessionStorage.getItem("obs_token"); } catch (e) { S.token = null; }
     if (!S.token) return showLogin();

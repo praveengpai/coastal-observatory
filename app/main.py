@@ -94,7 +94,7 @@ def me(p: Principal = Depends(current_user), db: Session = Depends(get_db)):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat(), "demo": config.DEMO_MODE}
 
 
 # ------------------------------------------------------------------ overview

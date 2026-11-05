@@ -33,6 +33,20 @@ services:
     depends_on: [db]
     networks: [internal]
 
+  demo:                                 # public demo with invented data: docker compose --profile demo up -d
+    profiles: ["demo"]
+    build: .
+    restart: unless-stopped
+    environment:
+      OBS_DATABASE_URL: sqlite:////tmp/demo.db       # its own throwaway database, never the real one
+      OBS_ENVIRONMENT: staging
+      OBS_DEMO_MODE: "1"
+      OBS_SECRET_KEY: ${OBS_SECRET_KEY:-change-me}-demo-only
+      OBS_DEMO_PASSWORD: ${OBS_DEMO_PASSWORD:-demo-password-2026}
+    command: ["sh", "-c", "while true; do python -m tools.seed_demo --reset && timeout 86400 uvicorn app.main:app --host 0.0.0.0 --port 8000; done"]
+    ports: ["127.0.0.1:8001:8000"]
+    networks: [demo]                    # kept apart from the real database
+
   web:                                  # only when the Observatory has the server to itself:
     profiles: ["nginx"]                 #   docker compose --profile nginx up -d
     image: nginx:1.27
@@ -49,3 +63,4 @@ volumes:
 
 networks:
   internal:
+  demo:

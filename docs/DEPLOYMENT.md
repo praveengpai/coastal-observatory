@@ -63,6 +63,18 @@ camp registration first (it creates the household list the report forms read), a
 gives the report forms to the Field team, Ward members, NIO and Training phone accounts (creating any that
 are missing). Phones pick up the new forms when they next refresh.
 
+### Public demo with invented data
+
+A separate demo runs beside the real Observatory with its own throwaway database, a "Demo" banner,
+and the same demo logins as the laptop demo. It rebuilds its invented data every night.
+
+```bash
+docker compose --profile demo up -d --build demo
+printf '\ndemo.<ip-with-dashes>.sslip.io {\n    reverse_proxy 127.0.0.1:8001\n}\n' >> /etc/caddy/Caddyfile && systemctl reload caddy
+```
+
+Set `OBS_DEMO_PASSWORD` in `.env` before starting it to use your own demo password.
+
 ### IMD data
 
 The Admin tab's **Data sources** panel lists every outside source, when it last updated and whether its key
