@@ -1,4 +1,4 @@
-/* Kochi Coastal One Health Observatory: dashboard client. No external libraries. */
+/* Kerala Coastal One Health Observatory: dashboard client. No external libraries. */
 (function () {
   "use strict";
 

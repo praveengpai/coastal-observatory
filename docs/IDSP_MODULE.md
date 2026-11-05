@@ -1,6 +1,6 @@
 # IDSP module
 
-A workspace for the Integrated Disease Surveillance Programme (IDSP) team inside the Kochi Coastal One
+A workspace for the Integrated Disease Surveillance Programme (IDSP) team inside the Kerala Coastal One
 Health Observatory. IDSP staff do their routine surveillance here; the same records feed the shared
 Observatory database with CSIR-NIO, and the IDSP-relevant parts of everyone else's records reach IDSP
 as signals to check.

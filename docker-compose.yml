@@ -1,4 +1,4 @@
-# Kochi Coastal One Health Observatory: production stack.
+# Kerala Coastal One Health Observatory: production stack.
 # ODK Central runs as its own stack (github.com/getodk/central) on the same server or another one.
 services:
   db:

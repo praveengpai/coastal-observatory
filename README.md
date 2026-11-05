@@ -1,4 +1,4 @@
-# Kochi Coastal One Health Observatory: platform
+# Kerala Coastal One Health Observatory: platform
 
 Field data collection, linked water–health database, analytics and role-based dashboards for the
 CSIR-NIO × MAGICS / CEDAC Aquadip© project and the longer-term Observatory.

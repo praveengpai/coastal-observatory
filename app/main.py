@@ -1,4 +1,4 @@
-"""Kochi Coastal One Health Observatory: API and dashboard server."""
+"""Kerala Coastal One Health Observatory: API and dashboard server."""
 import csv
 import io
 import math
@@ -38,7 +38,7 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="Kochi Coastal One Health Observatory", version="1.0.0", lifespan=lifespan,
+app = FastAPI(title="Kerala Coastal One Health Observatory", version="1.0.0", lifespan=lifespan,
               docs_url="/api/docs" if config.ENVIRONMENT != "production" else None, redoc_url=None)
 
 
