@@ -279,7 +279,7 @@ def test_admin_controls_report_form_visibility(client):
     assert client.post("/api/admin/report-forms/obs_report_health", json=body, headers=h).status_code == 200
     asha = client.get("/api/reports?days=365", headers=login(client, "asha")).json()
     assert "obs_report_health" not in {f["form_id"] for f in asha["forms"]}
-    body["visible_roles"] = ["coordinator", "scientist", "doctor", "asha"]
+    body["visible_roles"] = ["coordinator", "scientist", "doctor", "asha", "medcol"]
     client.post("/api/admin/report-forms/obs_report_health", json=body, headers=h)
     assert client.get("/api/admin/report-forms", headers=login(client, "coordinator")).status_code == 403
 
@@ -516,3 +516,16 @@ def test_idsp_review_regressions(client):
     h = login(client, "dso")
     r = client.post("/api/idsp/thresholds", content='{"lepto_n": NaN}', headers={**h, "Content-Type": "application/json"})
     assert r.status_code == 422
+
+
+def test_medical_college_role(client):
+    h = login(client, "medcol")
+    assert client.get("/api/me", headers=h).json()["pii"] is True
+    tasks = client.get("/api/tasks", headers=h).json()
+    assert all(t["site"] in ("DMA", "DMB") for t in tasks)
+    text = client.get("/api/export/persons.csv", headers=h).text
+    assert "name" not in text.splitlines()[0] and "phone" not in text.splitlines()[0]
+    forms = {f["form_id"] for f in client.get("/api/reports?days=365", headers=h).json()["forms"]}
+    assert {"obs_report_diarrhoea", "obs_report_health"} <= forms
+    assert client.get("/api/admin/sources", headers=h).status_code == 403
+    assert client.get("/api/stats/workdays", headers=h).status_code == 200

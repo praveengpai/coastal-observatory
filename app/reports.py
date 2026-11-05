@@ -33,11 +33,11 @@ CONDITION_LABEL = {
     "other": "Other",
 }
 WORKING = {"daily_wage", "fishing", "salaried", "self_emp", "home"}
-ALL_ROLES = "admin coordinator scientist doctor asha ward"
+ALL_ROLES = "admin coordinator scientist doctor asha ward medcol"
 DEFAULT_FORMS = [
     ("obs_report_diarrhoea", "Report: diarrhoeal disease", ALL_ROLES,
      "Field team (ASHA / volunteer), Ward members, Training phone"),
-    ("obs_report_health", "Report: health issue", "admin coordinator scientist doctor asha",
+    ("obs_report_health", "Report: health issue", "admin coordinator scientist doctor asha medcol",
      "Field team (ASHA / volunteer), Ward members, Training phone"),
     ("obs_report_onehealth", "Report: One Health event", ALL_ROLES,
      "Field team (ASHA / volunteer), Ward members, NIO water sampling, Training phone"),
@@ -53,6 +53,13 @@ def ensure_defaults(db: Session):
     for form_id, title, roles, groups in DEFAULT_FORMS:
         if not db.get(ReportForm, form_id):
             db.add(ReportForm(form_id=form_id, title=title, visible_roles=roles, phone_groups=groups, active=True))
+    db.flush()
+    if not db.get(Setting, "medcol_added"):     # once: let the new medical college role see the starter forms
+        for form_id, *_ in DEFAULT_FORMS:
+            f = db.get(ReportForm, form_id)
+            if f and "medcol" not in f.visible_roles.split():
+                f.visible_roles = f.visible_roles + " medcol"
+        db.add(Setting(key="medcol_added", value="1"))
     db.commit()
 
 

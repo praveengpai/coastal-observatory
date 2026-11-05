@@ -1,6 +1,6 @@
 # Field guide: setting up a phone and using the forms
 
-For ASHAs, volunteers, ward members, One Health volunteers, the MSW and the NIO team. Print one page per person.
+For ASHAs, volunteers, ward members, medical college teams (Family Adoption Programme), One Health volunteers, the MSW and the NIO team. Print one page per person.
 Phone installation in pictures, in English and Malayalam: open `/install` on the Observatory's web address.
 Malayalam text in the forms is a machine-assisted translation for accessibility; English is the reference.
 

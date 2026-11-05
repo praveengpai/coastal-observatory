@@ -19,10 +19,14 @@ ORDER = ["obs_camp_registration", "obs_camp_station", "obs_household_visit", "ob
          "obs_report_diarrhoea", "obs_report_health", "obs_report_onehealth", "obs_idsp_s"]
 FIELD, WARD, TRAINING, NIO = "Field team (ASHA / volunteer)", "Ward members", "Training phone", "NIO water sampling"
 IDSP = "IDSP staff (ASHA / JPHN / MO)"
-ACCESS = {  # report and IDSP forms; the camp forms keep the access set up by setup_central
-    "obs_report_diarrhoea": [FIELD, WARD, TRAINING],
-    "obs_report_health": [FIELD, WARD, TRAINING],
-    "obs_report_onehealth": [FIELD, WARD, NIO, TRAINING],
+MEDCOL = "Medical college team (Family Adoption Programme)"
+ACCESS = {  # added on top of the camp-form access set up by setup_central
+    "obs_camp_registration": [MEDCOL],
+    "obs_camp_station": [MEDCOL],
+    "obs_household_visit": [MEDCOL],
+    "obs_report_diarrhoea": [FIELD, WARD, MEDCOL, TRAINING],
+    "obs_report_health": [FIELD, WARD, MEDCOL, TRAINING],
+    "obs_report_onehealth": [FIELD, WARD, NIO, MEDCOL, TRAINING],
     "obs_idsp_s": [IDSP, TRAINING],          # IDSP Form S: health staff only, never volunteers
 }
 

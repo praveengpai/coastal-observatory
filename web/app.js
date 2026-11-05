@@ -9,18 +9,19 @@
     iweek: null, istatus: "verified",
   };
   const TABS = { master: "Master dashboard", idsp: "IDSP surveillance", asha: "ASHA / field", ward: "Ward member",
-    science: "Scientist", reports: "Household reports", advisories: "Advisories", admin: "Admin" };
+    science: "Scientist / Health Dept / Medical College", reports: "Household reports", advisories: "Advisories", admin: "Admin" };
   const ROLE_TABS = {
     admin: ["master", "idsp", "asha", "ward", "science", "reports", "advisories", "admin"],
     coordinator: ["master", "idsp", "asha", "ward", "science", "reports", "advisories", "admin"],
     scientist: ["master", "science", "idsp", "reports"], doctor: ["master", "idsp", "reports", "advisories", "asha"],
     asha: ["asha", "idsp", "reports", "advisories"], ward: ["ward", "reports"],
     jphn: ["idsp"], mo: ["idsp", "master"], dso: ["idsp", "master"], lab: ["idsp"],
+    medcol: ["master", "asha", "science", "reports", "idsp"],
   };
   const ROLE_NAMES = { admin: "Admin", coordinator: "Coordinator", scientist: "Scientist", doctor: "Doctor",
     asha: "ASHA", ward: "Ward member", jphn: "JPHN / JHI", mo: "Medical officer", dso: "District Surveillance Officer",
-    lab: "Laboratory" };
-  const ANALYSTS = ["admin", "coordinator", "scientist", "doctor", "mo", "dso"];
+    lab: "Laboratory", medcol: "Medical college (Family Adoption Programme)" };
+  const ANALYSTS = ["admin", "coordinator", "scientist", "doctor", "mo", "dso", "medcol"];
   const LAYERS = [["combined", "Combined"], ["water", "Water"], ["illness", "Illness"], ["salinity", "Salinity"],
     ["heat", "Heat"], ["vulnerability", "Elder vulnerability"]];
   const LAYER_NOTE = { combined: "Highest of all layers", water: "Positive samples, 8 weeks (NIO lab, else Aquadip©)",
@@ -410,7 +411,7 @@
         <div class="form-row">
           <label>Dataset<select data-act="dataset">${["samples", "persons", "households", "screening", "visits"].map((d) => `<option value="${d}" ${d === S.dataset ? "selected" : ""}>${d}</option>`).join("")}</select></label>
           <label>Site type<select data-act="sitetype">${[["", "All"], ["village", "Villages"], ["colony", "Canal colonies"], ["flats", "Flats"], ["ward", "Wards"]].map(([v, l]) => `<option value="${v}" ${v === S.siteType ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-          ${can("admin", "coordinator", "scientist") ? `<button type="button" class="btn primary" data-act="export">Export CSV</button>` : ""}
+          ${can("admin", "coordinator", "scientist", "medcol") ? `<button type="button" class="btn primary" data-act="export">Export CSV</button>` : ""}
         </div></div>
       <p class="mut">${rec.total} records${rec.total > rec.rows.length ? `, first ${rec.rows.length} shown` : ""}. No names or phone numbers; GPS rounded to about 100 m; persons without research consent excluded.</p>
       <div class="scroll" style="max-height:480px;overflow:auto"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>

@@ -20,8 +20,8 @@ from .models import (Advisory, AuditLog, Decision, HomeVisit, Household, Househo
 from .security import ROLES, Principal, authenticate, current_user, hash_password, make_token, require
 
 ALL = ROLES
-ANALYSTS = ("admin", "coordinator", "scientist", "doctor", "mo", "dso")
-IDSP_VIEW = ("admin", "coordinator", "scientist", "doctor", "asha", "jphn", "mo", "dso", "lab")
+ANALYSTS = ("admin", "coordinator", "scientist", "doctor", "mo", "dso", "medcol")
+IDSP_VIEW = ("admin", "coordinator", "scientist", "doctor", "asha", "jphn", "mo", "dso", "lab", "medcol")
 IDSP_VERIFY = ("admin", "asha", "jphn", "mo")          # health staff confirm community signals
 IDSP_ALERT = ("admin", "jphn", "mo", "dso")
 IDSP_EXPORT = ("admin", "coordinator", "mo", "dso")
@@ -195,7 +195,7 @@ def get_ageing(include_test: bool = False, p: Principal = Depends(current_user),
 # ------------------------------------------------------------------ actions
 
 @app.get("/api/tasks")
-def tasks(include_test: bool = False, p: Principal = Depends(require("admin", "coordinator", "asha", "doctor")),
+def tasks(include_test: bool = False, p: Principal = Depends(require("admin", "coordinator", "asha", "doctor", "medcol")),
           db: Session = Depends(get_db)):
     return rules.asha_tasks(db, sites_for(db, p, include_test), p.pii)
 
@@ -365,7 +365,8 @@ def records(dataset: str, include_test: bool = False, site_type: str | None = No
 
 
 @app.get("/api/export/{dataset}.csv")
-def export(dataset: str, include_test: bool = False, p: Principal = Depends(require("admin", "coordinator", "scientist")),
+def export(dataset: str, include_test: bool = False,
+           p: Principal = Depends(require("admin", "coordinator", "scientist", "medcol")),
            db: Session = Depends(get_db)):
     if dataset not in DATASETS:
         raise HTTPException(404, "Unknown dataset.")

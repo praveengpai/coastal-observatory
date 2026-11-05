@@ -33,6 +33,7 @@ DEMO_USERS = [  # username, name, role, sites
     ("doctor", "Demo CEDAC doctor", "doctor", "*"),
     ("asha", "Demo ASHA worker", "asha", "DC2 DMA"),
     ("ward", "Demo ward member", "ward", "DC2 DC1"),
+    ("medcol", "Demo medical college team (FAP)", "medcol", "DMA DMB"),
 ]
 DEMO_PASSWORD = os.environ.get("OBS_DEMO_PASSWORD", "demo-password-2026")
 FIRST = ["Lakshmi", "Mary", "Fathima", "Sreedevi", "Thomas", "Abdul", "Rajan", "Joseph", "Leela", "Ammini",

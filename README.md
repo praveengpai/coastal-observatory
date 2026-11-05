@@ -122,6 +122,7 @@ python -m pytest -q tests                          # run the tests
 | doctor | Master dashboard, field tasks, approves or rejects every advisory |
 | asha | Tasks for their own sites with names and phones, approved messages to send |
 | ward | Decisions for their wards, risk summary, counts of vulnerable elders (no names) |
+| medcol | Medical college Family Adoption Programme: dashboard, follow-up tasks with names for its adopted sites, household reports, de-identified records and exports |
 | jphn | IDSP tab: verifies signals (escalations come here), acts on alerts; names shown |
 | mo | IDSP tab: verifies, enters Form P and lab results, exports; master dashboard; names shown |
 | dso | IDSP tab: alerts, thresholds, weekly forms and exports; master dashboard; no names |
